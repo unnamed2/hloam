@@ -1,0 +1,174 @@
+#ifndef __RESULT_OF_H__
+#define __RESULT_OF_H__
+
+#include <cstddef>
+#include <type_traits>
+#include <utility>
+#include <tuple>
+
+template<size_t index, typename... T>
+struct one_of_initialize_struct {
+    std::tuple<std::decay_t<T>...> construct_args;
+};
+
+template<typename... T>
+struct one_of_storage {
+    
+    one_of_storage() {
+        type_index = 0;
+    }
+
+    template<size_t index, typename... Args>
+    one_of_storage(one_of_initialize_struct<index, Args...>&& args) {
+        construct_with_tuple<index, T...>(std::move(args.construct_args), std::make_index_sequence<sizeof...(Args)>());
+        type_index = index + 1;
+    }
+
+    ~one_of_storage() { destruct(); }
+
+    one_of_storage(const one_of_storage&) = delete;
+    one_of_storage& operator=(const one_of_storage&) = delete;
+    one_of_storage(one_of_storage&&) = delete;
+    one_of_storage& operator=(one_of_storage&&) = delete;
+
+    size_t type() const { return type_index - 1;}
+    
+    template<typename U>
+    auto get() const {
+        check_type_for<U, T...>(type_index - 1);
+        return *reinterpret_cast<const U*>(&storage);
+    }
+
+    template<typename U>
+    auto get()  {
+        check_type_for<U, T...>(type_index - 1);
+        return *reinterpret_cast<U*>(&storage);
+    }
+
+private:
+
+    template<typename U1, typename... U>
+    static constexpr inline auto max_of(U1&& t1, U&&... t) {
+        if constexpr (sizeof...(t) == 0)
+            return std::forward<U1>(t1);
+        else {
+            return std::max(std::forward<U1>(t1), max_of(std::forward<U>(t)...));
+        }
+    }
+
+    template<typename U, typename... Args>
+    constexpr inline auto construct_for(Args&&... args) {
+        return new (reinterpret_cast<U*>(storage)) U(std::forward<Args>(args)...);
+    }
+
+    template<size_t index, typename U1, typename... U, typename... Args>
+    constexpr inline auto construct(Args&&... args) {
+        if constexpr (index == 0) {
+            return construct_for<U1>(std::forward<Args>(args)...);
+        } else {
+            return construct<index - 1, U...>(std::forward<Args>(args)...);
+        }
+    }
+
+    template<size_t index, typename... U, typename Tpl, size_t... Idx>
+    constexpr inline auto construct_with_tuple(Tpl&& tpl, std::index_sequence<Idx...>) {
+        return construct<index, U...>(std::get<Idx>(tpl)...);
+    }
+
+    void destruct() {
+        if(type_index != 0) {
+            return destruct_for<T...>(type_index - 1);
+        }
+    }
+
+    template<typename U, typename... Us>
+    void destruct_for(size_t index)  {
+        if (index == 0) {
+            reinterpret_cast<U*>(storage)->~U();
+            return;
+        }
+
+        if constexpr (sizeof...(Us) == 0) {
+            throw_type_error();
+        } else {
+            return destruct_for<Us...>(index - 1);
+        }
+    }
+
+    template<typename U, typename... S>
+    static void check_type_for(size_t index) {
+        constexpr bool avls[] = {
+            std::is_same_v<U,S>...
+        };
+
+        if(index >= sizeof...(S) || !avls[index])
+             throw_type_error();
+    }
+
+    static constexpr inline auto throw_type_error() {
+        throw std::runtime_error("one_of_storage: cannot convert to T&");
+    }
+
+    alignas(max_of(alignof(T)...)) char storage[max_of(sizeof(T)...)];
+    size_t type_index;
+};
+
+template<size_t tag_index>
+struct result_tag {
+    template<typename... Args>
+    constexpr inline one_of_initialize_struct<tag_index, std::decay_t<Args>...>
+    operator()(Args&&... args) const {
+        return {std::make_tuple(std::forward<Args>(args)...)};
+    }
+};
+
+constexpr result_tag<0> ok;
+constexpr result_tag<1> fail;
+
+template<typename T, typename E>
+struct result_of {
+    
+    using self_type = result_of<T, E>;
+    template<typename init_struct>
+    result_of(init_struct&& s) : storage(std::forward<init_struct>(s)) {}
+
+    // delete the copy constructor and assignment operator
+    result_of(const result_of&) = delete;
+    result_of& operator=(const result_of&) = delete;
+    result_of(result_of&&) = delete;
+    result_of& operator=(result_of&&) = delete;
+
+    bool ok() const {
+        return storage.type() == 0;
+    }
+
+    auto error() {
+        return storage.template get<E>();
+    }
+
+    auto value() {
+        return storage.template get<T>();
+    }
+
+    const E& error() const {
+        return storage.template get<E>();
+    }
+
+    const T& value() const {
+        return storage.template get<T>();
+    }
+
+    template<typename _Callable>
+    self_type ok(_Callable&& callable) const {
+        if (ok()) {
+            callable(value());
+        }
+        return *this;
+    }
+
+private:
+    one_of_storage<T, E> storage;
+};
+
+
+#endif

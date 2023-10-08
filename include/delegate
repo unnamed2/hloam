@@ -1,0 +1,33 @@
+#ifndef __delegate__
+#define __delegate__
+
+#include <functional>
+#include <vector>
+
+template<typename T>
+struct delegate {};
+
+template<typename R, typename... Args>
+struct delegate<R(Args...)> {
+    using func_t = std::function<R(Args...)>;
+
+    std::vector<func_t> func;
+
+    void operator+=(const func_t& f) {
+        func.push_back(f);
+    }
+
+    template<typename... _Ctor>
+    void append(_Ctor&&... ctor) {
+        func.emplace_back(std::forward<_Ctor>(ctor)...);
+    }
+
+    template<typename... __Call>
+    void operator()(__Call&&... call) {
+        for(auto&& f: func) {
+            f(std::forward<__Call>(call)...);
+        }
+    }
+};
+
+#endif

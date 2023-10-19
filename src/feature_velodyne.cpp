@@ -265,7 +265,6 @@ inline void get_features(point_type* begin, point_type* end, const size_t* range
 
 void feature_velodyne(const pcl::PointCloud<PointType>::Ptr& cloud, feature_objects& feature) {
     size_t ring_count[64] = { 0 };
-    printf("cloud size = %lu\n", cloud->size());
     auto cond = [](auto&& p) {
         auto d = sqrtf(p2(p.x) + p2(p.y) + p2(p.z));
         return d > 2.0 && d < 100.0;
@@ -282,7 +281,6 @@ void feature_velodyne(const pcl::PointCloud<PointType>::Ptr& cloud, feature_obje
     }
 
     std::vector<PointType> points(ring_offset[63] + ring_count[63]);
-    printf("points size: %lu\n", points.size());
     for(auto& p: *cloud) {
         if(p.ring < 64 && cond(p))
             points[ring_offset[p.ring]++] = p;

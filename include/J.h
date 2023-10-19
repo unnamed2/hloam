@@ -531,8 +531,13 @@ inline Transform __LM_iteration(const feature_objects& source, array_adaptor<Poi
         b(idx) = -c.b;
 
         if(loss) {
-            loss[0] += c.b;
+            loss[0] += c.b * c.b;
         }
+    }
+
+    if(index < 200) {
+        loss[0] = 10000.00;
+        return initial_guess;
     }
 
     Eigen::Matrix<float, 6, 6> ATA = A.topRows(index).transpose() * A.topRows(index);

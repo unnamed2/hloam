@@ -27,8 +27,6 @@ class Junk: public ros::NodeHandle {
     std::vector<PointType> livox_sequences;
     std::queue<stamped_velodyne> velodyne_sequences;
 
-    Eigen::Matrix4d livox_transform;
-
     size_t livox_index = 0;
 
     ros::Subscriber sub_livox;
@@ -43,30 +41,12 @@ class Junk: public ros::NodeHandle {
     ros::Publisher publish_combined;
 
 public:
-    Junk(): ros::NodeHandle("Junk") {
+    Junk(): ros::NodeHandle("tailor") {
         std::string livox_topic, velodyne_topic;
 
-        param<std::string>("/livox_topic", livox_topic, "/livox_hap");
-        param<std::string>("/velodyne_topic", velodyne_topic, "/u2102");
+        param<std::string>("/tailor/livox_topic", livox_topic, "/livox_hap");
+        param<std::string>("/tailor/velodyne_topic", velodyne_topic, "/u2102");
         // X,Y,Z,R,P,Y
-        std::vector<float> livox_cab;
-        param<std::vector<float>>("/livox_transform", livox_cab, { 0, 0, 0, 0, 0, 0 });
-
-        if(livox_cab.size() != 6) {
-            ROS_FATAL("livox_transform must have 6 elements, %zd got", livox_cab.size());
-        }
-
-        Transform tr;
-        tr.x = livox_cab[0];
-        tr.y = livox_cab[1];
-        tr.z = livox_cab[2];
-        tr.roll = livox_cab[3];
-        tr.pitch = livox_cab[4];
-        tr.yaw = livox_cab[5];
-
-        ROS_INFO("livox_transform: %f %f %f %f %f %f", tr.x, tr.y, tr.z, tr.roll, tr.pitch, tr.yaw);
-
-        livox_transform = to_eigen(tr).inverse();
 
         ROS_INFO("Subscribing to %s and %s", livox_topic.c_str(), velodyne_topic.c_str());
         sub_livox = subscribe(livox_topic, 100, &Junk::livox_callback, this);
@@ -172,8 +152,14 @@ public:
     }
 
     void try_combine_clouds() {
+        std::sort(livox_sequences.begin(), livox_sequences.end(),
+                  [](const PointType& a, const PointType& b) { return a.time < b.time; });
+
         while(ros::ok() && __try_combine_clouds())
             ;
+
+        livox_sequences.erase(livox_sequences.begin(), livox_sequences.begin() + livox_index);
+        livox_index = 0;
     }
 
     void call_features(pcl::PointCloud<PointType>::Ptr livox_cloud,
@@ -201,9 +187,7 @@ public:
         msg.header.stamp = time;
         pub.publish(msg);
 
-        pcl::PointCloud<PointType> transform;
-        pcl::transformPointCloud(cloud_livox, transform, livox_transform);
-        pcl::toROSMsg(transform, msg);
+        pcl::toROSMsg(cloud_livox, msg);
         msg.header.frame_id = "map";
         msg.header.stamp = time;
 
@@ -217,7 +201,6 @@ int main(int argc, char** argv) {
     }
 
     ros::init(argc, argv, "sync_node");
-    ros::NodeHandle nh;
     Junk junk;
 
     auto feature_thrd = create_feature_thread(&junk);

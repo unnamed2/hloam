@@ -3,7 +3,7 @@ project(tailor)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 set(CMAKE_CXX_STANDARD 17)
-add_compile_options(-O3)
+add_compile_options(-O3 -g)
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
@@ -19,6 +19,8 @@ find_package(catkin REQUIRED COMPONENTS
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
 find_package(PCL REQUIRED)
+
+find_package(GTSAM REQUIRED)
 
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
@@ -121,6 +123,7 @@ include_directories(
   include
   ${catkin_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
+  ${GTSAM_INCLUDE_DIR}
 )
 
 ## Declare a C++ library
@@ -143,6 +146,8 @@ add_executable(sync_node
   src/features.cpp
   src/mapping.cpp
   src/J.cpp
+  src/loop.cpp
+  src/Scancontext.cpp
 )
 
 ## Rename C++ executable without prefix
@@ -159,13 +164,26 @@ add_executable(sync_node
 target_link_libraries(sync_node
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
+  gtsam
 )
-
 
 add_executable(empty_node
   src/empty_node.cpp
 )
 target_link_libraries(empty_node ${catkin_LIBRARIES})
+
+add_executable(loop_test 
+  test/loop_test.cpp
+  src/feature_velodyne.cpp
+  src/loop.cpp
+  src/Scancontext.cpp
+)
+
+target_link_libraries(loop_test
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  gtsam
+)
 #############
 ## Install ##
 #############

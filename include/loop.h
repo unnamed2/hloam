@@ -3,6 +3,7 @@
 
 #include "Scancontext.h"
 #include "comm.h"
+
 #include <gtsam/geometry/Pose3.h>
 
 using LMTransform = ::Transform;
@@ -28,7 +29,7 @@ struct loop_var {
     int loop_counter = 0;
     size_t loop_reset = 5;
     float loop_max_loss = 0.05f;
-
+    size_t min_constriant_node = std::numeric_limits<size_t>::max();
     loop_var();
 
     size_t loop_detection(const pcl::PointCloud<XYZIRT>::Ptr& cloud, const feature_objects& frame,

@@ -99,7 +99,10 @@ size_t loop_var::loop_detection(const pcl::PointCloud<XYZIRT>::Ptr& cloud,
     };
     loop.push_back(r);
 
-    optimization(id);
+    if(id < min_constriant_node)
+        min_constriant_node = id;
+
+    optimization(min_constriant_node);
     printf("loop detected: %d %zd\n", id, frames.size() - 1);
     return id;
 }

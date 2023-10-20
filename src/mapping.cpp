@@ -1,69 +1,14 @@
-#include "mapping.h"
+#include "comm.h"
+#include "loop.h"
+#include "residual.h"
 
-#include <J.h>
-#include <comm.h>
 #include <nav_msgs/Path.h>
 #include <pcl/common/transforms.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <result_of>
 #include <sensor_msgs/PointCloud2.h>
 #include <tf/transform_broadcaster.h>
-
-struct mapping_thread {
-    struct calculate_val {
-        synced_message msg;
-        feature_frame frame;
-    };
-
-    synced_queue<calculate_val> q;
-    std::thread thread;
-
-    ros::Publisher pub_path;
-    ros::Publisher pub_local_map;
-
-    nav_msgs::Path path;
-    tf::TransformBroadcaster tf_broadcaster;
-
-    Eigen::Matrix4d livox_transform;
-
-    volatile bool should_stop = false;
-
-    float degenerate_threshold;
-
-    mapping_thread(ros::NodeHandle* nh);
-    ~mapping_thread();
-
-    void publish_transform(const Eigen::Matrix4d& transform, const ros::Time& time) {
-        tf::Transform tf;
-        tf.setOrigin(tf::Vector3(transform(0, 3), transform(1, 3), transform(2, 3)));
-
-        Eigen::Matrix3d rot = transform.block<3, 3>(0, 0);
-        Eigen::Quaterniond qd(rot);
-
-        tf.setRotation(tf::Quaternion(qd.x(), qd.y(), qd.z(), qd.w()));
-        tf_broadcaster.sendTransform(tf::StampedTransform(tf, time, "map", "velodyne16"));
-
-        path.header.stamp = time;
-
-        geometry_msgs::PoseStamped pose;
-        pose.header = path.header;
-        pose.pose.position.x = transform(0, 3);
-        pose.pose.position.y = transform(1, 3);
-        pose.pose.position.z = transform(2, 3);
-
-        pose.pose.orientation.x = qd.x();
-        pose.pose.orientation.y = qd.y();
-        pose.pose.orientation.z = qd.z();
-        pose.pose.orientation.w = qd.w();
-
-        path.poses.push_back(pose);
-        pub_path.publish(path);
-    }
-
-private:
-    void __mapping_thread(const std::string& save_path);
-    static void __mapping_thread_entry(mapping_thread* self, const std::string& save_path);
-};
+#include <visualization_msgs/MarkerArray.h>
 
 template<typename Scalar>
 static void remove_degenerate(Eigen::Matrix<Scalar, 6, 6>& ATA, Scalar threshold) {
@@ -84,9 +29,7 @@ static void remove_degenerate(Eigen::Matrix<Scalar, 6, 6>& ATA, Scalar threshold
 }
 
 Transform LM2(const feature_frame& this_features, const feature_frame& local_maps,
-              float degenerate_threshold) {
-    Transform initial = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
-
+              float degenerate_threshold, Transform initial = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }) {
     feature_adapter adap_velodyne(local_maps.velodyne_feature);
     feature_adapter adap_livox(local_maps.livox_feature);
     for(int i = 0; i < 30; i++) {
@@ -130,55 +73,38 @@ Transform LM2(const feature_frame& this_features, const feature_frame& local_map
     return initial;
 }
 
-struct visual_odom_v2 {
+static bool feature_ok(const feature_objects& object) {
+    if(object.line_features != nullptr && object.line_features->size() < 10)
+        return false;
+
+    if(object.plane_features != nullptr && object.plane_features->size() < 100)
+        return false;
+
+    if(object.non_features != nullptr && object.non_features->size() < 100)
+        return false;
+
+    return true;
+}
+
+struct local_map {
     constexpr static size_t previous_frame_count = 20;
     feature_frame prev_frames[previous_frame_count];
     Eigen::Matrix4d prev_frame_location[previous_frame_count];
-    size_t head = 0, counters = 0;
 
-    float degenerate_threshold = 10.0f;
+    size_t head = previous_frame_count - 1, counters = 0;
 
-    bool use_livox = true;
-    bool use_velodyne = true;
+    feature_frame local_map;
+    bool local_map_dirty = true;
 
-    loop_var loop;
-
-    result_of<Eigen::Matrix4d, std::string>
-        update_current_frame(const feature_frame& this_features) {
-        if(counters == 0) {
-            prev_frames[0] = std::move(this_features);
-            prev_frame_location[0] = Eigen::Matrix4d::Identity();
-            counters++;
-            return ok(prev_frame_location[0]);
+    const feature_frame& get_local_map() {
+        if(local_map_dirty) {
+            local_map = update_local_map();
+            local_map_dirty = false;
         }
-
-        auto local_maps = local_map();
-        if(use_velodyne && this_features.velodyne_feature.line_features->size() < 10 ||
-           this_features.velodyne_feature.plane_features->size() < 100)
-            return fail("velodyne not enough features");
-
-        if(use_livox && this_features.livox_feature.plane_features->size() < 10 ||
-           this_features.livox_feature.non_features->size() < 100)
-            return fail("livox not enough features");
-
-        Transform Tr = LM2(this_features, local_maps, degenerate_threshold);
-        Eigen::Matrix4d this_frame_location = prev_frame_location[head] * to_eigen(Tr);
-        // if transformation and rotation is too small, drop this frame
-
-        if(std::abs(Tr.x) < 0.1 && std::abs(Tr.y) < 0.1 && std::abs(Tr.z) < 0.1 &&
-           std::abs(Tr.roll) < 0.01 && std::abs(Tr.pitch) < 0.01 && std::abs(Tr.yaw) < 0.01) {
-            return ok(this_frame_location);
-        }
-
-        head = (head + 1) % previous_frame_count;
-        if(counters < previous_frame_count)
-            counters++;
-        prev_frames[head] = this_features;
-        prev_frame_location[head] = this_frame_location;
-        return ok(this_frame_location);
+        return local_map;
     }
 
-    feature_frame local_map() {
+    feature_frame update_local_map() const {
         assert(counters > 0);
 
         feature_frame result;
@@ -233,33 +159,227 @@ struct visual_odom_v2 {
         }
     }
 
-    void loop_detection(const pcl::PointCloud<PointType>::Ptr& cloud, const feature_objects& frame,
-                        const Eigen::Matrix4d& transform) {
-        size_t result = loop.loop_detection(cloud, frame, transform);
-        if(result == 0)
-            return;
+    void push(const feature_frame& frame, const Eigen::Matrix4d& transform) {
 
-        for(size_t i = head;; i--) {
-            prev_frame_location[i] = loop.btr(head - i + 1);
-            if(i == 0)
-                break;
-        }
+        head = (head + 1) % previous_frame_count;
 
-        for(size_t i = counters - 1; i > head; i--) {
-            prev_frame_location[i] = loop.btr(counters - i + head + 2);
+        if(counters < previous_frame_count)
+            counters++;
+        prev_frames[head] = frame;
+        prev_frame_location[head] = transform;
+        local_map_dirty = true;
+    }
+
+    bool empty() const {
+        return counters == 0;
+    }
+
+    size_t size() const {
+        return counters;
+    }
+
+    const Eigen::Matrix4d& tr() const {
+        assert(counters > 0);
+        return prev_frame_location[head];
+    }
+
+    void set(size_t back_index, const Eigen::Matrix4d& transform) {
+        assert(back_index <= counters);
+        if(back_index <= head + 1) {
+            prev_frame_location[head + 1 - back_index] = transform;
+        } else {
+            prev_frame_location[counters + head + 1 - back_index] = transform;
         }
     }
 };
 
-static Eigen::Matrix4d mapping_for_V2(const feature_frame& frame,
-                                      visual_odom_v2& mapping_velodyne) {
-    auto r = mapping_velodyne.update_current_frame(frame);
-    if(!r.ok()) {
-        ROS_INFO("Mapping failed: %s", r.error().c_str());
-        return Eigen::Matrix4d::Identity();
-    }
-    return r.value();
+geometry_msgs::Pose to_ros_pose(const Eigen::Matrix4d& transform) {
+    geometry_msgs::Pose pose;
+    pose.position.x = transform(0, 3);
+    pose.position.y = transform(1, 3);
+    pose.position.z = transform(2, 3);
+
+    Eigen::Matrix3d rot = transform.block<3, 3>(0, 0);
+    Eigen::Quaterniond qd(rot);
+
+    pose.orientation.x = qd.x();
+    pose.orientation.y = qd.y();
+    pose.orientation.z = qd.z();
+    pose.orientation.w = qd.w();
+
+    return pose;
 }
+
+struct visual_odom_v2_config {
+    float degenerate_threshold = 10.0f;
+
+    double key_frame_distance_x = 0.5;
+    double key_frame_distance_y = 0.5;
+    double key_frame_distance_z = 0.1;
+
+    double key_frame_distance_roll = 0.02;
+    double key_frame_distance_pitch = 0.02;
+    double key_frame_distance_yaw = 0.02;
+
+    double loop_loss = 0.05f;
+
+    int loop_reset = 5;
+    int loop_initial_load = 100;
+};
+
+visual_odom_v2_config get_odom_config(ros::NodeHandle* handle) {
+    visual_odom_v2_config config;
+    handle->param<float>("/tailor/LM/degenerate_threshold", config.degenerate_threshold, 10.0f);
+
+    handle->param<double>("/tailor/key_frame/x", config.key_frame_distance_x, 0.5);
+    handle->param<double>("/tailor/key_frame/y", config.key_frame_distance_y, 0.5);
+    handle->param<double>("/tailor/key_frame/z", config.key_frame_distance_z, 0.1);
+
+    handle->param<double>("/tailor/key_frame/roll", config.key_frame_distance_roll, 0.02);
+    handle->param<double>("/tailor/key_frame/pitch", config.key_frame_distance_pitch, 0.02);
+    handle->param<double>("/tailor/key_frame/yaw", config.key_frame_distance_yaw, 0.02);
+
+    handle->param<double>("/tailor/loop/max_loss", config.loop_loss, 0.05);
+
+    handle->param<int>("/tailor/loop/reset", config.loop_reset, 5);
+    handle->param<int>("/tailor/loop/initial_load", config.loop_initial_load, 100);
+
+    return config;
+}
+
+struct visual_odom_v2 {
+    local_map local_maps;
+
+    Transform next_initial_guess;
+
+    float degenerate_threshold = 10.0f;
+
+    bool use_livox = true;
+    bool use_velodyne = true;
+
+    loop_var loop;
+
+    visual_odom_v2_config config;
+
+    visual_odom_v2(ros::NodeHandle* nh) {
+
+        config = get_odom_config(nh);
+
+        loop.loop_counter = config.loop_initial_load;
+        loop.loop_reset = config.loop_reset;
+        loop.loop_max_loss = config.loop_loss;
+
+        final_path.header.frame_id = "map";
+        loop_markers.header.frame_id = "map";
+
+        loop_markers.type = visualization_msgs::Marker::LINE_LIST;
+        loop_markers.action = visualization_msgs::Marker::ADD;
+        loop_markers.ns = "loop_marker";
+        loop_markers.id = 0;
+        loop_markers.pose.orientation.w = 1.0;
+        loop_markers.color.r = 1.0;
+        loop_markers.color.g = 1.0;
+        loop_markers.color.b = 0.0;
+        loop_markers.color.a = 1.0;
+
+        loop_markers.scale.x = 0.1;
+        loop_markers.scale.y = 0.1;
+        loop_markers.scale.z = 0.1;
+    }
+
+    result_of<Transform, std::string> update_current_frame(const feature_frame& this_features) {
+
+        if(!feature_ok(this_features.velodyne_feature))
+            return fail("velodyne not enough features");
+
+        if(!feature_ok(this_features.livox_feature))
+            return fail("livox not enough features");
+
+        if(local_maps.empty()) {
+            Eigen::Matrix4d identity = Eigen::Matrix4d::Identity();
+            local_maps.push(this_features, identity);
+            return ok(Transform{ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 });
+        }
+
+        auto M = local_maps.get_local_map();
+
+        Transform Tr = LM2(this_features, M, degenerate_threshold, next_initial_guess);
+
+        next_initial_guess = Tr;
+        return ok(Tr);
+    }
+
+    Eigen::Matrix4d loop_detection(const pcl::PointCloud<PointType>::Ptr& cloud,
+                                   const feature_objects& frame, const Eigen::Matrix4d& transform) {
+        size_t result = loop.loop_detection(cloud, frame, transform);
+        if(result == 0)
+            return transform;
+
+        for(size_t i = 1; i <= local_maps.size(); i++) {
+            local_maps.set(i, loop.btr(i));
+        }
+
+        for(size_t i = result; i < final_path.poses.size(); i++) {
+            auto pose = to_ros_pose(loop.tr(i));
+            final_path.poses[i].pose = pose;
+        }
+
+        loop_markers.points.clear();
+        for(auto&& r: loop.loop) {
+            geometry_msgs::Point p1, p2;
+            p1.x = loop.tr(r.source_frame_id)(0, 3);
+            p1.y = loop.tr(r.source_frame_id)(1, 3);
+            p1.z = loop.tr(r.source_frame_id)(2, 3);
+
+            p2.x = loop.tr(r.target_frame_id)(0, 3);
+            p2.y = loop.tr(r.target_frame_id)(1, 3);
+            p2.z = loop.tr(r.target_frame_id)(2, 3);
+
+            loop_markers.points.push_back(p1);
+            loop_markers.points.push_back(p2);
+        }
+
+        return loop.btr(1);
+    }
+
+    visualization_msgs::Marker loop_markers;
+    nav_msgs::Path final_path;
+
+    std::optional<Eigen::Matrix4d> mapping(const pcl::PointCloud<PointType>::Ptr& velodyne_cloud,
+                                           const feature_frame& frame, ros::Time time) {
+        auto Mr = update_current_frame(frame);
+        if(!Mr.ok()) {
+            ROS_INFO("Frame dropped : %s", Mr.error().c_str());
+            return std::nullopt;
+        }
+
+        auto Tr = Mr.value();
+        Eigen::Matrix4d M = local_maps.tr() * to_eigen(Tr);
+
+        // if transformation and rotation is too small, drop this frame
+        if(!local_maps.empty() && std::abs(Tr.x) < config.key_frame_distance_x &&
+           std::abs(Tr.y) < config.key_frame_distance_y &&
+           std::abs(Tr.z) < config.key_frame_distance_z &&
+           std::abs(Tr.roll) < config.key_frame_distance_roll &&
+           std::abs(Tr.pitch) < config.key_frame_distance_pitch &&
+           std::abs(Tr.yaw) < config.key_frame_distance_yaw) {
+            return M;
+        }
+
+        local_maps.push(frame, M);
+
+        geometry_msgs::PoseStamped pose;
+        pose.header.frame_id = "map";
+        pose.header.stamp = time;
+        pose.pose = to_ros_pose(M);
+
+        final_path.poses.push_back(pose);
+        final_path.header.stamp = time;
+
+        loop_markers.header.stamp = time;
+        return loop_detection(velodyne_cloud, frame.velodyne_feature, M);
+    }
+};
 
 struct calculate_val {
     synced_message msg;
@@ -279,9 +399,69 @@ static void save_traces(const nav_msgs::Path& traces, std::string save_path) {
     fclose(fp);
 }
 
-void mapping_thread::__mapping_thread(const std::string& save_path) {
+struct mapping_thread {
+    struct calculate_val {
+        synced_message msg;
+        feature_frame frame;
+    };
 
-    visual_odom_v2 mapping_v2;
+    synced_queue<calculate_val> q;
+    std::thread thread;
+
+    ros::Publisher pub_path;
+    ros::Publisher pub_local_map;
+    ros::Publisher pub_loop_marker;
+    ros::Publisher pub_velodyne;
+    ros::Publisher pub_livox;
+
+    tf::TransformBroadcaster tf_broadcaster;
+
+    Eigen::Matrix4d livox_transform;
+
+    volatile bool should_stop = false;
+
+    float degenerate_threshold;
+
+    mapping_thread(ros::NodeHandle* nh);
+    ~mapping_thread();
+
+    void publish_transform(const Eigen::Matrix4d& transform, const ros::Time& time) {
+        tf::Transform tf;
+        tf.setOrigin(tf::Vector3(transform(0, 3), transform(1, 3), transform(2, 3)));
+
+        Eigen::Matrix3d rot = transform.block<3, 3>(0, 0);
+        Eigen::Quaterniond qd(rot);
+
+        tf.setRotation(tf::Quaternion(qd.x(), qd.y(), qd.z(), qd.w()));
+        tf_broadcaster.sendTransform(tf::StampedTransform(tf, time, "map", "velodyne16"));
+    }
+
+    void publish_map(const pcl::PointCloud<XYZIRT>& velodyne, const pcl::PointCloud<XYZIRT>& livox,
+                     const ros::Time& time) {
+        sensor_msgs::PointCloud2 msg;
+        pcl::toROSMsg(velodyne, msg);
+        msg.header.frame_id = "map";
+        msg.header.stamp = time;
+        pub_velodyne.publish(msg);
+
+        pcl::toROSMsg(livox, msg);
+        msg.header.frame_id = "map";
+        msg.header.stamp = time;
+        pub_livox.publish(msg);
+    }
+
+private:
+    void __mapping_thread(ros::NodeHandle* nh);
+    static void __mapping_thread_entry(mapping_thread* self, ros::NodeHandle* nh);
+};
+
+void mapping_thread::__mapping_thread(ros::NodeHandle* nh) {
+    visual_odom_v2 mapping_v2(nh);
+
+    std::string save_path;
+    nh->param<std::string>("/tailor/mapping_save_path", save_path, "");
+    printf("Mapping save path: %s\r\n", save_path.c_str());
+
     mapping_v2.degenerate_threshold = degenerate_threshold;
 
     printf("Mapping thread started\r\n");
@@ -292,22 +472,33 @@ void mapping_thread::__mapping_thread(const std::string& save_path) {
             break;
 
         while(!pq.empty() && !this->should_stop) {
-            auto M = mapping_for_V2(pq.front().frame, mapping_v2);
-            mapping_v2.loop_detection(pq.front().msg.velodyne, pq.front().frame.velodyne_feature,
-                                      M);
+            auto& s = pq.front().msg;
+            auto Mr = mapping_v2.mapping(s.velodyne, pq.front().frame, s.time);
+            if(!Mr.has_value()) {
+                pq.pop();
+                continue;
+            }
 
+            auto M = Mr.value();
             pcl::PointCloud<PointType> final_cloud_velodyne, final_cloud_livox;
 
             Eigen::Matrix4d LX = M * livox_transform;
-            pcl::transformPointCloud(*pq.front().msg.velodyne, final_cloud_velodyne, M);
-            pcl::transformPointCloud(*pq.front().msg.livox, final_cloud_livox, LX);
+            pcl::transformPointCloud(*s.velodyne, final_cloud_velodyne, M);
+            pcl::transformPointCloud(*s.livox, final_cloud_livox, LX);
 
-            publish_delegate(final_cloud_velodyne, final_cloud_livox, pq.front().msg.time);
-            publish_transform(M, pq.front().msg.time);
+            publish_map(final_cloud_velodyne, final_cloud_livox, s.time);
+            publish_transform(M, s.time);
+
+            pub_path.publish(mapping_v2.final_path);
+
+            if(!mapping_v2.loop_markers.points.empty())
+                pub_loop_marker.publish(mapping_v2.loop_markers);
+
             pq.pop();
         }
     }
 
+    auto path = mapping_v2.final_path;
     if(!save_path.empty()) {
         if(path.poses.empty()) {
             printf("No trace to save!\r\n");
@@ -320,25 +511,23 @@ void mapping_thread::__mapping_thread(const std::string& save_path) {
     printf("Mapping thread stopped\r\n");
 }
 
-void mapping_thread::__mapping_thread_entry(mapping_thread* self, const std::string& save_path) {
-    self->__mapping_thread(save_path);
+void mapping_thread::__mapping_thread_entry(mapping_thread* self, ros::NodeHandle* nh) {
+    self->__mapping_thread(nh);
 }
 
 mapping_thread::mapping_thread(ros::NodeHandle* nh) {
-    std::string save_path;
-    nh->param<std::string>("/tailor/mapping_save_path", save_path, "");
-    printf("Mapping save path: %s\r\n", save_path.c_str());
 
     pub_path = nh->advertise<nav_msgs::Path>("/paths", 1000);
     pub_local_map = nh->advertise<sensor_msgs::PointCloud2>("/local_map", 1000);
+    pub_loop_marker = nh->advertise<visualization_msgs::Marker>("/loop_marker", 1000);
+    pub_velodyne = nh->advertise<sensor_msgs::PointCloud2>("/g_velodyne", 1000);
+    pub_livox = nh->advertise<sensor_msgs::PointCloud2>("/g_livox", 1000);
 
-    thread = std::thread(&mapping_thread::__mapping_thread_entry, this, save_path);
+    thread = std::thread(&mapping_thread::__mapping_thread_entry, this, nh);
 
     feature_frame_delegate.append([this](const synced_message& msg, const feature_frame& frame) {
         q.push({ msg, frame });
     });
-
-    path.header.frame_id = "map";
 
     std::vector<float> livox_cab;
     nh->param<std::vector<float>>("/tailor/livox_transform", livox_cab, { 0, 0, 0, 0, 0, 0 });

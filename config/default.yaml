@@ -2,7 +2,22 @@ tailor:
   mapping_save_path: /home/jlurobot/桌面/tailor/src/tailor/map
   livox_topic: /livox_hap
   velodyne_topic: /u2102
-  degenerate_threshold: 10.0 # 200.0
   livox_transform: [ -1.44776,    -0.0634472,   1.35995,     0.00433622,  0.04771802, -0.00743534 ]
   use_livox: true
   use_velodyne: true
+  
+  LM:
+    degenerate_threshold: 10.0 # 200.0
+  
+  key_frame:
+    x: 0.2
+    y: 0.2
+    z: 0.1
+    roll: 0.02
+    pitch: 0.02
+    yaw: 0.02
+
+  loop:
+    max_loss: 0.02
+    loop_reset: 2
+    initial_load: 100

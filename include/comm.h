@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <nanoflann.hpp>
+#include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -50,6 +51,46 @@ struct feature_frame {
     feature_objects livox_feature;
     feature_objects velodyne_feature;
 };
+
+static inline void transform_cloud(const pcl::PointCloud<PointType>::Ptr& cloud,
+                                   pcl::PointCloud<PointType>::Ptr& out,
+                                   const Eigen::Matrix4d& matrix) {
+    if(cloud == nullptr) {
+        out.reset();
+        return;
+    }
+
+    if(out == nullptr)
+        out.reset(new pcl::PointCloud<PointType>);
+
+    out->resize(cloud->size());
+    pcl::transformPointCloud(*cloud, *out, matrix);
+}
+
+static inline void transform_cloud(const feature_objects& cloud, feature_objects& out,
+                                   const Eigen::Matrix4d& matrix) {
+    transform_cloud(cloud.line_features, out.line_features, matrix);
+    transform_cloud(cloud.plane_features, out.plane_features, matrix);
+    transform_cloud(cloud.non_features, out.non_features, matrix);
+}
+
+template<typename PointTypePtr>
+static inline void concat(PointTypePtr& out, const PointTypePtr& cloud) {
+    if(cloud == nullptr)
+        return;
+
+    if(out == nullptr) {
+        out.reset(new pcl::PointCloud<PointType>());
+    }
+
+    *out += *cloud;
+}
+
+static inline void concat(feature_objects& out, const feature_objects& feature) {
+    concat(out.line_features, feature.line_features);
+    concat(out.plane_features, feature.plane_features);
+    concat(out.non_features, feature.non_features);
+}
 
 void feature_livox(const pcl::PointCloud<PointType>::Ptr& cloud, feature_objects& feature);
 void feature_velodyne(const pcl::PointCloud<PointType>::Ptr& cloud, feature_objects& feature);
@@ -253,8 +294,5 @@ std::shared_ptr<mapping_thread> create_mapping_thread(ros::NodeHandle* nh);
 
 extern delegate<void(const synced_message&)> sync_frame_delegate;
 extern delegate<void(const synced_message&, const feature_frame&)> feature_frame_delegate;
-extern delegate<void(pcl::PointCloud<PointType>& cloud_velodyne,
-                     pcl::PointCloud<PointType>& cloud_livox, ros::Time time)>
-    publish_delegate;
 
 #endif

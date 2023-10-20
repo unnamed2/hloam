@@ -535,7 +535,8 @@ inline Transform __LM_iteration(const feature_objects& source, array_adaptor<Poi
         }
     }
 
-    if(index < 200) {
+    if(index < 100) {
+        ROS_INFO("index(%d) < 100, loss set to 10000", index.load());
         loss[0] = 10000.00;
         return initial_guess;
     }

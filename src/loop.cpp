@@ -1,12 +1,10 @@
-#include "J.h"
-#include "mapping.h"
+#include "loop.h"
 
-#include <gtsam/geometry/Pose3.h>
+#include "residual.h"
+
 #include <gtsam/nonlinear/ISAM2.h>
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/PriorFactor.h>
-
-constexpr int loop_reset = 5;
 
 static gtsam::Pose3 p(LMTransform tr) {
     return gtsam::Pose3(gtsam::Rot3::RzRyRx(tr.yaw, tr.pitch, tr.roll),
@@ -80,7 +78,7 @@ size_t loop_var::loop_detection(const pcl::PointCloud<XYZIRT>::Ptr& cloud,
         transform_cloud(frame.velodyne_features, transformed, this_tr);
         concat(local_map, transformed);
     }
-    if(yaw > 3.15)
+    if(yaw > M_PI)
         yaw -= M_PI * 2.0;
 
     LMTransform initial_guess = { 0, 0, 0, 0, 0, yaw };
@@ -88,14 +86,16 @@ size_t loop_var::loop_detection(const pcl::PointCloud<XYZIRT>::Ptr& cloud,
     float loss = 0.0f;
     auto final_tr = LM(frame, local_map, initial_guess, &loss);
 
+    gtsam::Pose3 from = p(frames[id].transform);
+    gtsam::Pose3 to = p(frames[id].transform * to_eigen(final_tr));
     printf("loss: %f\n", loss);
-    if(loss > 0.01) {
+    if(loss > 0.05) {
         return 0;
     }
     loop_result r = {
         (size_t)id,
         frames.size() - 1,
-        final_tr,
+        from.between(to),
     };
     loop.push_back(r);
 
@@ -105,6 +105,7 @@ size_t loop_var::loop_detection(const pcl::PointCloud<XYZIRT>::Ptr& cloud,
 }
 
 void loop_var::optimization(size_t from_id) {
+
     gtsam::ISAM2 isam;
     gtsam::NonlinearFactorGraph graph;
     gtsam::Values initial;
@@ -124,7 +125,8 @@ void loop_var::optimization(size_t from_id) {
         auto& frame = frames[i];
         gtsam::Pose3 Xi = p(frame.transform);
 
-        gtsam::BetweenFactor<gtsam::Pose3> odometry_factor(i - 1, i, Xi.between(X0), prior_noise);
+        gtsam::BetweenFactor<gtsam::Pose3> odometry_factor(i - 1, i, X0.between(Xi), prior_noise);
+
         graph.push_back(odometry_factor);
         initial.insert(i, Xi);
         X0 = Xi;
@@ -133,7 +135,7 @@ void loop_var::optimization(size_t from_id) {
     for(auto&& [from, to, tr]: loop) {
         if(from < from_id || to < from_id)
             continue;
-        gtsam::BetweenFactor<gtsam::Pose3> loop_factor(from, to, p(tr), prior_noise);
+        gtsam::BetweenFactor<gtsam::Pose3> loop_factor(from, to, tr, prior_noise);
         graph.push_back(loop_factor);
     }
 

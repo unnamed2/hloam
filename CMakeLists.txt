@@ -145,7 +145,7 @@ add_executable(sync_node
   src/feature_velodyne.cpp
   src/features.cpp
   src/mapping.cpp
-  src/J.cpp
+  src/delegate.cpp
   src/loop.cpp
   src/Scancontext.cpp
 )

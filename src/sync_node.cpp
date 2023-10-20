@@ -36,8 +36,6 @@ class Junk: public ros::NodeHandle {
 
     std::mutex mtx;
 
-    ros::Publisher pub;
-
     ros::Publisher publish_combined;
 
 public:
@@ -51,13 +49,7 @@ public:
         ROS_INFO("Subscribing to %s and %s", livox_topic.c_str(), velodyne_topic.c_str());
         sub_livox = subscribe(livox_topic, 100, &Junk::livox_callback, this);
         sub_velodyne = subscribe(velodyne_topic, 100, &Junk::velodyne_callback, this);
-        pub = advertise<sensor_msgs::PointCloud2>("/global_map", 100);
         publish_combined = advertise<sensor_msgs::PointCloud2>("/combined_cloud", 100);
-
-        publish_delegate.append([this](pcl::PointCloud<PointType>& cloud_velodyne,
-                                       pcl::PointCloud<PointType>& cloud_livox, ros::Time time) {
-            publish_message(cloud_velodyne, cloud_livox, time);
-        });
 
         sync_frame_delegate.append([this](const synced_message& msg) {
             pcl::PointCloud<PointType> cloud;
@@ -155,11 +147,14 @@ public:
         std::sort(livox_sequences.begin(), livox_sequences.end(),
                   [](const PointType& a, const PointType& b) { return a.time < b.time; });
 
+        auto start_livox_index = livox_index;
         while(ros::ok() && __try_combine_clouds())
             ;
-
-        livox_sequences.erase(livox_sequences.begin(), livox_sequences.begin() + livox_index);
-        livox_index = 0;
+        if(start_livox_index != livox_index) {
+            livox_sequences.erase(livox_sequences.begin(),
+                                  livox_sequences.begin() + start_livox_index);
+            livox_index -= start_livox_index;
+        }
     }
 
     void call_features(pcl::PointCloud<PointType>::Ptr livox_cloud,
@@ -176,22 +171,6 @@ public:
         msg.time = time;
 
         sync_frame_delegate(msg);
-    }
-
-    void publish_message(pcl::PointCloud<PointType>& cloud_velodyne,
-                         pcl::PointCloud<PointType>& cloud_livox, ros::Time time) {
-
-        sensor_msgs::PointCloud2 msg;
-        pcl::toROSMsg(cloud_velodyne, msg);
-        msg.header.frame_id = "map";
-        msg.header.stamp = time;
-        pub.publish(msg);
-
-        pcl::toROSMsg(cloud_livox, msg);
-        msg.header.frame_id = "map";
-        msg.header.stamp = time;
-
-        pub.publish(msg);
     }
 };
 

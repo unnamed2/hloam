@@ -1,5 +1,6 @@
 #include "comm.h"
 
+#include <filesystem>
 #include <mutex>
 #include <pcl/common/transforms.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -8,6 +9,17 @@
 #include <sensor_msgs/PointCloud2.h>
 #include <signal.h>
 #include <tf/transform_broadcaster.h>
+
+struct XYZRPYT {
+    PCL_ADD_POINT4D;
+    double roll, pitch, yaw;
+    double time;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+} EIGEN_ALIGN16;
+
+POINT_CLOUD_REGISTER_POINT_STRUCT(XYZRPYT,
+                                  (float, x, x)(float, y, y)(float, z, z)(double, roll, roll)(
+                                      double, pitch, pitch)(double, yaw, yaw)(double, time, time));
 
 struct LMCacheItem {
     Eigen::Matrix4d pose;
@@ -98,6 +110,18 @@ static auto minmax_time(const stamped_velodyne& cloud) {
     return std::make_pair(var.first->time + offset, var.second->time + offset);
 }
 
+template<typename T>
+static auto downsample(pcl::PointCloud<T>& input, double rate) {
+    pcl::PointCloud<T> out;
+    for(size_t i = 0; i < input.size(); i++) {
+        double val = rand() / (RAND_MAX + 1.0);
+        if(val < rate) {
+            out.push_back(input[i]);
+        }
+    }
+    return out;
+}
+
 class Gen: public ros::NodeHandle {
     std::vector<PointType> livox_sequences;
     std::queue<stamped_velodyne> velodyne_sequences;
@@ -114,12 +138,26 @@ class Gen: public ros::NodeHandle {
     LMCacheTable* tbl = nullptr;
     Eigen::Matrix4d livox_transform;
 
-    ros::Publisher pub_global_map;
+    ros::Publisher pub_global_velodyne;
+    ros::Publisher pub_global_livox;
 
-    pcl::PointCloud<XYZIRT> global_map;
+    ros::Publisher pub_feature_velodyne_line;
+    ros::Publisher pub_feature_velodyne_plane;
+    ros::Publisher pub_feature_livox_plane;
+    ros::Publisher pub_feature_livox_non;
+
+    pcl::PointCloud<XYZIRT> global_map_velodyne;
+    pcl::PointCloud<XYZIRT> global_map_livox;
+
+    feature_frame global_features;
+
     std::string global_map_filename;
 
     tf::TransformBroadcaster br;
+
+    double downsample_rate = 0.01;
+
+    std::vector<LMCacheItem> traces;
 
 public:
     Gen(): ros::NodeHandle("tailor") {
@@ -141,6 +179,8 @@ public:
         param<std::string>("/gen/livox_topic", livox_topic, "/livox_hap");
         param<std::string>("/gen/velodyne_topic", velodyne_topic, "/u2102");
         param<std::string>("/gen/global_map", global_map_filename, "/tmp/global_map.pcd");
+        param<double>("/gen/downsample_rate", downsample_rate, 0.01);
+
         // X,Y,Z,R,P,Y
         std::vector<float> livox_cab;
         param<std::vector<float>>("/gen/livox_transform", livox_cab, { 0, 0, 0, 0, 0, 0 });
@@ -164,7 +204,15 @@ public:
         sub_livox = subscribe(livox_topic, 100, &Gen::livox_callback, this);
         sub_velodyne = subscribe(velodyne_topic, 100, &Gen::velodyne_callback, this);
 
-        pub_global_map = advertise<sensor_msgs::PointCloud2>("/global_map", 100);
+        pub_global_velodyne = advertise<sensor_msgs::PointCloud2>("/global_map/velodyne", 100);
+        pub_global_livox = advertise<sensor_msgs::PointCloud2>("/global_map/livox", 100);
+        pub_feature_velodyne_line =
+            advertise<sensor_msgs::PointCloud2>("/features/velodyne_line", 100);
+        pub_feature_velodyne_plane =
+            advertise<sensor_msgs::PointCloud2>("/features/velodyne_plane", 100);
+
+        pub_feature_livox_plane = advertise<sensor_msgs::PointCloud2>("/features/livox_plane", 100);
+        pub_feature_livox_non = advertise<sensor_msgs::PointCloud2>("/features/livox_non", 100);
     }
 
     void livox_callback(const sensor_msgs::PointCloud2ConstPtr& msg) {
@@ -276,29 +324,56 @@ public:
             return;
         }
 
+        feature_objects livox_features;
+        feature_livox(livox_cloud, livox_features);
+
+        feature_objects velodyne_features;
+        feature_velodyne(velodyne_cloud, velodyne_features);
+
         Eigen::Matrix4d pose = tbl->next();
 
-        pcl::PointCloud<PointType> transformed;
-        pcl::transformPointCloud(*livox_cloud, transformed,
+        traces.push_back({ pose, sec });
+
+        pcl::PointCloud<PointType> livox_tr;
+        pcl::PointCloud<PointType> velodyne_tr;
+
+        pcl::transformPointCloud(*livox_cloud, livox_tr,
                                  static_cast<Eigen::Matrix4d>(pose * livox_transform));
 
-        pcl::PointCloud<PointType> velodyne_tr;
+        pcl::transformPointCloud(*livox_features.non_features, *livox_features.non_features,
+                                 static_cast<Eigen::Matrix4d>(pose * livox_transform));
+
+        pcl::transformPointCloud(*livox_features.plane_features, *livox_features.plane_features,
+                                 static_cast<Eigen::Matrix4d>(pose * livox_transform));
+
+        pcl::transformPointCloud(*velodyne_features.line_features, *velodyne_features.line_features,
+                                 static_cast<Eigen::Matrix4d>(pose));
+
+        pcl::transformPointCloud(*velodyne_features.plane_features,
+                                 *velodyne_features.plane_features,
+                                 static_cast<Eigen::Matrix4d>(pose));
+
         pcl::transformPointCloud(*velodyne_cloud, velodyne_tr, pose);
 
-        pcl::PointCloud<PointType> final_cloud = velodyne_tr + transformed;
+        concat(global_features.livox_feature, livox_features);
+        concat(global_features.velodyne_feature, velodyne_features);
 
-        std::random_shuffle(final_cloud.begin(), final_cloud.end());
-        size_t final_size = final_cloud.size() / 100;
-        final_cloud.erase(final_cloud.begin() + final_size, final_cloud.end());
-        global_map += final_cloud;
+        auto velodyne_ds = downsample(velodyne_tr, downsample_rate);
+        auto livox_ds = downsample(livox_tr, downsample_rate);
+
+        global_map_livox += livox_ds;
+        global_map_velodyne += velodyne_ds;
 
         sensor_msgs::PointCloud2 msg;
-        pcl::toROSMsg(final_cloud, msg);
-
+        pcl::toROSMsg(velodyne_ds, msg);
         msg.header.frame_id = "map";
         msg.header.stamp = time;
+        pub_global_velodyne.publish(msg);
 
-        pub_global_map.publish(msg);
+        pcl::toROSMsg(livox_ds, msg);
+        msg.header.frame_id = "map";
+        msg.header.stamp = time;
+        pub_global_livox.publish(msg);
 
         tf::StampedTransform st;
         st.frame_id_ = "map";
@@ -308,14 +383,85 @@ public:
 
         Eigen::Quaterniond q(pose.block<3, 3>(0, 0));
         st.setRotation(tf::Quaternion(q.x(), q.y(), q.z(), q.w()));
-
         br.sendTransform(st);
+
+        pcl::toROSMsg(*livox_features.non_features, msg);
+        msg.header.frame_id = "map";
+        msg.header.stamp = time;
+        pub_feature_livox_non.publish(msg);
+
+        pcl::toROSMsg(*livox_features.plane_features, msg);
+        msg.header.frame_id = "map";
+        msg.header.stamp = time;
+        pub_feature_livox_plane.publish(msg);
+
+        pcl::toROSMsg(*velodyne_features.line_features, msg);
+        msg.header.frame_id = "map";
+        msg.header.stamp = time;
+        pub_feature_velodyne_line.publish(msg);
+
+        pcl::toROSMsg(*velodyne_features.plane_features, msg);
+        msg.header.frame_id = "map";
+        msg.header.stamp = time;
+        pub_feature_velodyne_plane.publish(msg);
     }
 
     void save_global_map() {
         if(global_map_filename.empty())
             return;
-        pcl::io::savePCDFileBinary(global_map_filename, global_map);
+
+        if(std::filesystem::exists(global_map_filename)) {
+            if(!std::filesystem::is_directory(global_map_filename)) {
+                std::filesystem::remove(global_map_filename);
+                std::filesystem::create_directories(global_map_filename);
+            }
+
+        } else {
+            std::filesystem::create_directories(global_map_filename);
+        }
+
+        char filenames[1024];
+        sprintf(filenames, "%s/velodyne_global.pcd", global_map_filename.c_str());
+        pcl::io::savePCDFileBinary(filenames, global_map_velodyne);
+
+        sprintf(filenames, "%s/livox_global.pcd", global_map_filename.c_str());
+        pcl::io::savePCDFileBinary(filenames, global_map_livox);
+
+        pcl::PointCloud<PointType> global_map;
+        global_map += global_map_velodyne;
+        global_map += global_map_livox;
+
+        sprintf(filenames, "%s/global.pcd", global_map_filename.c_str());
+        pcl::io::savePCDFileBinary(filenames, global_map);
+
+        sprintf(filenames, "%s/livox_plane_features.pcd", global_map_filename.c_str());
+        pcl::io::savePCDFileBinary(filenames, *global_features.livox_feature.plane_features);
+
+        sprintf(filenames, "%s/livox_non_features.pcd", global_map_filename.c_str());
+        pcl::io::savePCDFileBinary(filenames, *global_features.livox_feature.non_features);
+
+        sprintf(filenames, "%s/velodyne_plane_features.pcd", global_map_filename.c_str());
+        pcl::io::savePCDFileBinary(filenames, *global_features.velodyne_feature.plane_features);
+
+        sprintf(filenames, "%s/velodyne_line_features.pcd", global_map_filename.c_str());
+        pcl::io::savePCDFileBinary(filenames, *global_features.velodyne_feature.line_features);
+
+        pcl::PointCloud<XYZRPYT> Tr;
+        for(auto& trace: traces) {
+            Transform tr = from_eigen(trace.pose);
+            XYZRPYT pt;
+            pt.x = tr.x;
+            pt.y = tr.y;
+            pt.z = tr.z;
+            pt.roll = tr.roll;
+            pt.pitch = tr.pitch;
+            pt.yaw = tr.yaw;
+            pt.time = trace.time;
+            Tr.push_back(pt);
+        }
+
+        sprintf(filenames, "%s/trace.pcd", global_map_filename.c_str());
+        pcl::io::savePCDFileBinary(filenames, Tr);
     }
 };
 

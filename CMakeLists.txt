@@ -131,6 +131,11 @@ include_directories(
 #   src/${PROJECT_NAME}/tailor.cpp
 # )
 
+add_library(features STATIC
+  src/feature_livox.cpp
+  src/feature_velodyne.cpp
+)
+
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
 ## either from message generation or dynamic reconfigure
@@ -141,13 +146,11 @@ include_directories(
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(sync_node 
   src/sync_node.cpp
-  src/feature_livox.cpp
-  src/feature_velodyne.cpp
-  src/features.cpp
   src/mapping.cpp
   src/delegate.cpp
   src/loop.cpp
   src/Scancontext.cpp
+  src/features.cpp
 )
 
 ## Rename C++ executable without prefix
@@ -165,6 +168,7 @@ target_link_libraries(sync_node
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
   gtsam
+  features
 )
 
 add_executable(empty_node
@@ -174,7 +178,6 @@ target_link_libraries(empty_node ${catkin_LIBRARIES})
 
 add_executable(loop_test 
   test/loop_test.cpp
-  src/feature_velodyne.cpp
   src/loop.cpp
   src/Scancontext.cpp
 )
@@ -183,6 +186,7 @@ target_link_libraries(loop_test
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
   gtsam
+  features
 )
 
 add_executable(gen 
@@ -192,6 +196,7 @@ add_executable(gen
 target_link_libraries(gen
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
+  features
 )
 
 #############

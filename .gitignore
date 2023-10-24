@@ -1,4 +1,3 @@
 .vscode
 build
-map/*.txt
-map/*.pcd
+map/**

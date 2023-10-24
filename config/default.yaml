@@ -3,8 +3,8 @@ tailor:
   livox_topic: /livox_hap
   velodyne_topic: /u2102
   livox_transform: [ -1.44776,    -0.0634472,   1.35995,     0.00433622,  0.04771802, -0.00743534 ]
-  use_livox: false
-  use_velodyne: true
+  use_livox: true
+  use_velodyne: false
   
   LM:
     degenerate_threshold: 10.0 # 200.0

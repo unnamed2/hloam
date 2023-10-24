@@ -2,7 +2,9 @@
 #include <condition_variable>
 #include <mutex>
 #include <pcl/common/transforms.h>
+#include <pcl_conversions/pcl_conversions.h>
 #include <queue>
+#include <sensor_msgs/PointCloud2.h>
 #include <thread>
 
 struct feature_thread {
@@ -10,6 +12,11 @@ struct feature_thread {
     std::thread thread;
 
     volatile bool should_stop = false;
+
+    ros::Publisher pub_livox_plane_features;
+    ros::Publisher pub_livox_non_features;
+    ros::Publisher pub_velodyne_line_features;
+    ros::Publisher pub_velodyne_plane_features;
 
     feature_thread(ros::NodeHandle* nh);
     ~feature_thread();
@@ -42,6 +49,22 @@ void feature_thread::__features_thread() {
                     printf("velodyne feature not enough!\r\n");
                     continue;
                 }
+
+                if(pub_velodyne_line_features.getNumSubscribers() > 0) {
+                    sensor_msgs::PointCloud2 msg;
+                    pcl::toROSMsg(*frame.velodyne_feature.line_features, msg);
+                    msg.header.stamp = pq.front().time;
+                    msg.header.frame_id = "velodyne16";
+                    pub_velodyne_line_features.publish(msg);
+                }
+
+                if(pub_velodyne_plane_features.getNumSubscribers() > 0) {
+                    sensor_msgs::PointCloud2 msg;
+                    pcl::toROSMsg(*frame.velodyne_feature.plane_features, msg);
+                    msg.header.stamp = pq.front().time;
+                    msg.header.frame_id = "velodyne16";
+                    pub_velodyne_plane_features.publish(msg);
+                }
             }
 
             if(use_livox) {
@@ -57,6 +80,22 @@ void feature_thread::__features_thread() {
 
                 pcl::transformPointCloud(*frame.livox_feature.non_features,
                                          *frame.livox_feature.non_features, livox_transform);
+
+                if(pub_livox_plane_features.getNumSubscribers() > 0) {
+                    sensor_msgs::PointCloud2 msg;
+                    pcl::toROSMsg(*frame.livox_feature.plane_features, msg);
+                    msg.header.stamp = pq.front().time;
+                    msg.header.frame_id = "velodyne16";
+                    pub_livox_plane_features.publish(msg);
+                }
+
+                if(pub_livox_non_features.getNumSubscribers() > 0) {
+                    sensor_msgs::PointCloud2 msg;
+                    pcl::toROSMsg(*frame.livox_feature.non_features, msg);
+                    msg.header.stamp = pq.front().time;
+                    msg.header.frame_id = "velodyne16";
+                    pub_livox_non_features.publish(msg);
+                }
             }
 
             feature_frame_delegate(pq.front(), frame);
@@ -68,6 +107,18 @@ void feature_thread::__features_thread() {
 feature_thread::feature_thread(ros::NodeHandle* nh) {
     nh->param<bool>("/tailor/use_livox", use_livox, true);
     nh->param<bool>("/tailor/use_velodyne", use_velodyne, true);
+
+    pub_velodyne_line_features =
+        nh->advertise<sensor_msgs::PointCloud2>("/features/velodyne_line_features", 1, true);
+
+    pub_velodyne_plane_features =
+        nh->advertise<sensor_msgs::PointCloud2>("/features/velodyne_plane_features", 1, true);
+
+    pub_livox_plane_features =
+        nh->advertise<sensor_msgs::PointCloud2>("/features/livox_plane_features", 1, true);
+
+    pub_livox_non_features =
+        nh->advertise<sensor_msgs::PointCloud2>("/features/livox_non_features", 1, true);
 
     if(!use_livox && !use_velodyne) {
         ROS_FATAL("use_livox and use_velodyne cannot be both false");

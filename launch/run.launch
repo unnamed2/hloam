@@ -3,6 +3,6 @@
 
     <node pkg="tailor" type="sync_node" name="tailor" output="screen" />
 
-    <node pkg="rviz" type="rviz" name="tailor_rviz" args="-d $(find tailor)/config/default.rviz" output="screen" />
+    <node pkg="rviz" type="rviz" name="tailor_rviz" args="-d $(find tailor)/rviz/default.rviz" output="screen" />
     
 </launch>

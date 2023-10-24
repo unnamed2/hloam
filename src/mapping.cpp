@@ -2,6 +2,7 @@
 #include "loop.h"
 #include "residual.h"
 
+#include <algorithm>
 #include <nav_msgs/Path.h>
 #include <pcl/common/transforms.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -23,7 +24,7 @@ static void remove_degenerate(Eigen::Matrix<Scalar, 6, 6>& ATA, Scalar threshold
 
     if(is_degenerate) {
         for(int i = 0; i < 6; i++) {
-            ATA(i, i) += threshold;
+            ATA(i, i) += 0.5;
         }
     }
 }
@@ -95,7 +96,6 @@ struct local_map {
 
     feature_frame local_map;
     bool local_map_dirty = true;
-
     const feature_frame& get_local_map() {
         if(local_map_dirty) {
             local_map = update_local_map();
@@ -115,38 +115,50 @@ struct local_map {
 
         for(size_t i = 0; i < counters; i++) {
             Eigen::Matrix4d this_transform = transform * prev_frame_location[i];
-            transform_cloud(prev_frames[i].velodyne_feature.line_features->points,
-                            std::back_inserter(result.velodyne_feature.line_features->points),
-                            this_transform);
+            if(prev_frames[i].velodyne_feature.line_features) {
+                transform_cloud(prev_frames[i].velodyne_feature.line_features->points,
+                                std::back_inserter(result.velodyne_feature.line_features->points),
+                                this_transform);
+            }
 
-            transform_cloud(prev_frames[i].velodyne_feature.plane_features->points,
-                            std::back_inserter(result.velodyne_feature.plane_features->points),
-                            this_transform);
+            if(prev_frames[i].velodyne_feature.plane_features) {
+                transform_cloud(prev_frames[i].velodyne_feature.plane_features->points,
+                                std::back_inserter(result.velodyne_feature.plane_features->points),
+                                this_transform);
+            }
 
-            transform_cloud(prev_frames[i].livox_feature.plane_features->points,
-                            std::back_inserter(result.livox_feature.plane_features->points),
-                            this_transform);
+            if(prev_frames[i].livox_feature.plane_features) {
+                transform_cloud(prev_frames[i].livox_feature.plane_features->points,
+                                std::back_inserter(result.livox_feature.plane_features->points),
+                                this_transform);
+            }
 
-            transform_cloud(prev_frames[i].livox_feature.non_features->points,
-                            std::back_inserter(result.livox_feature.non_features->points),
-                            this_transform);
+            if(prev_frames[i].livox_feature.non_features) {
+                transform_cloud(prev_frames[i].livox_feature.non_features->points,
+                                std::back_inserter(result.livox_feature.non_features->points),
+                                this_transform);
+            }
         }
+        if(result.velodyne_feature.line_features)
+            result.velodyne_feature.line_features->width =
+                result.velodyne_feature.line_features->points.size();
+        if(result.velodyne_feature.plane_features)
+            result.velodyne_feature.plane_features->width =
+                result.velodyne_feature.plane_features->points.size();
 
-        result.velodyne_feature.line_features->width =
-            result.velodyne_feature.line_features->points.size();
+        if(result.livox_feature.plane_features)
+            result.livox_feature.plane_features->width =
+                result.livox_feature.plane_features->points.size();
 
-        result.velodyne_feature.plane_features->width =
-            result.velodyne_feature.plane_features->points.size();
-
-        result.livox_feature.plane_features->width =
-            result.livox_feature.plane_features->points.size();
-
-        result.livox_feature.non_features->width = result.livox_feature.non_features->points.size();
+        if(result.livox_feature.non_features)
+            result.livox_feature.non_features->width =
+                result.livox_feature.non_features->points.size();
         return result;
     }
 
     template<typename _Range, typename OutputIter, typename MatrixType>
     static void transform_cloud(_Range&& range, OutputIter iter, MatrixType&& matrix) {
+
         for(auto&& point: range) {
             Eigen::Vector4d p(point.x, point.y, point.z, 1);
 
@@ -225,6 +237,8 @@ struct visual_odom_v2_config {
 
     int loop_reset = 5;
     int loop_initial_load = 100;
+
+    bool enable_loop = true;
 };
 
 visual_odom_v2_config get_odom_config(ros::NodeHandle* handle) {
@@ -244,6 +258,8 @@ visual_odom_v2_config get_odom_config(ros::NodeHandle* handle) {
     handle->param<int>("/tailor/loop/reset", config.loop_reset, 5);
     handle->param<int>("/tailor/loop/initial_load", config.loop_initial_load, 100);
 
+    handle->param<bool>("/tailor/loop/enable", config.enable_loop, true);
+
     return config;
 }
 
@@ -253,9 +269,6 @@ struct visual_odom_v2 {
     Transform next_initial_guess;
 
     float degenerate_threshold = 10.0f;
-
-    bool use_livox = true;
-    bool use_velodyne = true;
 
     loop_var loop;
 
@@ -377,7 +390,11 @@ struct visual_odom_v2 {
         final_path.header.stamp = time;
 
         loop_markers.header.stamp = time;
-        return loop_detection(velodyne_cloud, frame.velodyne_feature, M);
+
+        if(config.enable_loop)
+            return loop_detection(velodyne_cloud, frame.velodyne_feature, M);
+        else
+            return M;
     }
 };
 

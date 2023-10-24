@@ -3,7 +3,7 @@ project(tailor)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 set(CMAKE_CXX_STANDARD 17)
-add_compile_options(-O3 -g)
+add_compile_options(-O3)
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
@@ -184,6 +184,16 @@ target_link_libraries(loop_test
   ${PCL_LIBRARIES}
   gtsam
 )
+
+add_executable(gen 
+  src/gen.cpp
+)
+
+target_link_libraries(gen
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+)
+
 #############
 ## Install ##
 #############

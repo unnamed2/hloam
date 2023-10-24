@@ -366,7 +366,7 @@ inline size_t Ab(const feature_objects& source, const feature_adapter& target, c
 
     size_t total_size = corner_size + surf_size + non_size;
 
-    A.resize(total_size, 6);
+        A.resize(total_size, 6);
     b.resize(total_size);
 
     std::atomic<int> index = 0;

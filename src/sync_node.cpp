@@ -7,6 +7,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <signal.h>
+#include <tailor/synced_cloud.h>
 
 struct stamped_velodyne {
     pcl::PointCloud<PointType>::Ptr cloud;
@@ -52,6 +53,9 @@ public:
         publish_combined = advertise<sensor_msgs::PointCloud2>("/combined_cloud", 100);
 
         sync_frame_delegate.append([this](const synced_message& msg) {
+            if(publish_combined.getNumSubscribers() == 0) {
+                return;
+            }
             pcl::PointCloud<PointType> cloud;
             cloud.reserve(msg.livox->size() + msg.velodyne->size());
             cloud.insert(cloud.end(), msg.livox->begin(), msg.livox->end());

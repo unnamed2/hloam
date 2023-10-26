@@ -20,6 +20,9 @@ static auto minmax_time(const stamped_velodyne& cloud) {
                             [](const PointType& a, const PointType& b) { return a.time < b.time; });
 
     double offset = 0.0f;
+    if(var.first->time < 1.0f) {
+        offset = cloud.time;
+    }
 
     return std::make_pair(var.first->time + offset, var.second->time + offset);
 }
@@ -164,7 +167,7 @@ public:
     void call_features(pcl::PointCloud<PointType>::Ptr livox_cloud,
                        pcl::PointCloud<PointType>::Ptr velodyne_cloud, ros::Time time) {
 
-        if(livox_cloud->size() < 100 || velodyne_cloud->size() < 100) {
+        if(livox_cloud->size() < 10000 || velodyne_cloud->size() < 10000) {
             ROS_INFO("livox_cloud->size(%zd) < 100 || velodyne_cloud->size(%zd) < 100",
                      livox_cloud->size(), velodyne_cloud->size());
             return;
@@ -173,7 +176,6 @@ public:
         msg.livox = livox_cloud;
         msg.velodyne = velodyne_cloud;
         msg.time = time;
-
         sync_frame_delegate(msg);
     }
 };

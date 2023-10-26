@@ -138,7 +138,7 @@ inline coeff line_coeff(const searched_line& line, const point_type& p) {
 
     float ld2 = a012 / l12;
 
-    float s = 1 - 0.9 * fabs(ld2);
+    float s = tanf(1 - 0.9 * fabs(ld2));
 
     c.x = s * la;
     c.y = s * lb;
@@ -223,6 +223,7 @@ inline coeff plane_coeff(const plane& pl, const point_type& p) {
         float pd2 = pl.a * p.x + pl.b * p.y + pl.c * p.z + pl.d;
 
         float s = 1 - 0.9 * fabs(pd2) / sqrt(sqrt(p.x * p.x + p.y * p.y + p.z * p.z));
+        s = tanf(s);
         coeff c;
 
         c.x = s * pl.a;
@@ -264,6 +265,8 @@ inline coeff point_coeff(const point_type& p1, const point_type& p2) {
     } else {
         c.s = 1 - d * 5.0f;
     }
+
+    c.s = tanf(c.s);
 
     c.x = c.s * (p2.x - p1.x);
     c.y = c.s * (p2.y - p1.y);
@@ -366,7 +369,7 @@ inline size_t Ab(const feature_objects& source, const feature_adapter& target, c
 
     size_t total_size = corner_size + surf_size + non_size;
 
-        A.resize(total_size, 6);
+    A.resize(total_size, 6);
     b.resize(total_size);
 
     std::atomic<int> index = 0;
@@ -415,7 +418,7 @@ inline size_t Ab(const feature_objects& source, const feature_adapter& target, c
         A(idx, 5) = j.j[5];
         b(idx) = -c.b;
 
-        loss += 0.5f * c.b * c.b;
+        loss += c.b * c.b;
     }
 
     if(_loss != nullptr) {
@@ -466,6 +469,15 @@ inline auto Ab(std::initializer_list<feature_pair> pairs, const Transform& t = T
     }
 
     N.top = index;
+
+    if(_loss != nullptr) {
+        if(index == 0) {
+            *_loss = 10000.0f;
+        } else {
+            *_loss /= index;
+        }
+    }
+
     return N;
 }
 

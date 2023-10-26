@@ -149,3 +149,41 @@ void loop_var::optimization(size_t from_id) {
         frames[value.key].transform = to_eigen(value.value.cast<gtsam::Pose3>());
     }
 }
+
+Eigen::Matrix4d solve_GTSAM(const Eigen::Matrix4d& M1, const Eigen::Matrix4d& M2, float loss_M1,
+                            float loss_M2) {
+    gtsam::ISAM2 isam;
+    gtsam::NonlinearFactorGraph graph;
+    gtsam::Values initial;
+
+    gtsam::noiseModel::Diagonal::shared_ptr fixed_noise =
+        gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector6::Constant(0.0));
+    gtsam::noiseModel::Diagonal::shared_ptr loss_M1_noise =
+        gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector6::Constant(loss_M1));
+
+    gtsam::noiseModel::Diagonal::shared_ptr loss_M2_noise =
+        gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector6::Constant(loss_M2));
+
+    gtsam::Pose3 X0 = gtsam::Pose3::Identity();
+    gtsam::PriorFactor F0 = gtsam::PriorFactor<gtsam::Pose3>(0, X0, fixed_noise);
+    graph.push_back(F0);
+
+    gtsam::Pose3 X1 = p(M1);
+    gtsam::Pose3 X2 = p(M2);
+
+    gtsam::BetweenFactor B0 =
+        gtsam::BetweenFactor<gtsam::Pose3>(0, 1, X0.between(X1), loss_M1_noise);
+    gtsam::BetweenFactor B1 =
+        gtsam::BetweenFactor<gtsam::Pose3>(0, 1, X0.between(X2), loss_M2_noise);
+
+    graph.push_back(B0);
+    graph.push_back(B1);
+
+    initial.insert(0, X0);
+    initial.insert(1, loss_M1 < loss_M2 ? X1 : X2);
+
+    isam.update(graph, initial);
+
+    auto result = isam.calculateEstimate();
+    return to_eigen(result.at<gtsam::Pose3>(1));
+}

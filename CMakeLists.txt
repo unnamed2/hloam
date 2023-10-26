@@ -136,6 +136,14 @@ add_library(features STATIC
   src/feature_velodyne.cpp
 )
 
+add_library(xloop STATIC 
+  src/loop.cpp
+  src/Scancontext.cpp
+)
+
+target_link_libraries(xloop
+  gtsam
+)
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
 ## either from message generation or dynamic reconfigure
@@ -148,8 +156,6 @@ add_executable(sync_node
   src/sync_node.cpp
   src/mapping.cpp
   src/delegate.cpp
-  src/loop.cpp
-  src/Scancontext.cpp
   src/features.cpp
 )
 
@@ -169,6 +175,7 @@ target_link_libraries(sync_node
   ${PCL_LIBRARIES}
   gtsam
   features
+  xloop
 )
 
 add_executable(empty_node
@@ -178,8 +185,6 @@ target_link_libraries(empty_node ${catkin_LIBRARIES})
 
 add_executable(loop_test 
   test/loop_test.cpp
-  src/loop.cpp
-  src/Scancontext.cpp
 )
 
 target_link_libraries(loop_test
@@ -187,6 +192,7 @@ target_link_libraries(loop_test
   ${PCL_LIBRARIES}
   gtsam
   features
+  xloop
 )
 
 add_executable(gen 

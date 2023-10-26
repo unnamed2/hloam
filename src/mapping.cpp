@@ -17,6 +17,7 @@ static void remove_degenerate(Eigen::Matrix<Scalar, 6, 6>& ATA, Scalar threshold
     bool is_degenerate = false;
     for(int i = 0; i < 6; i++) {
         if(eigen(i).real() < threshold) {
+            ROS_INFO("degenerate: %f", eigen(i).real());
             is_degenerate = true;
             break;
         }
@@ -30,16 +31,30 @@ static void remove_degenerate(Eigen::Matrix<Scalar, 6, 6>& ATA, Scalar threshold
 }
 
 Transform LM2(const feature_frame& this_features, const feature_frame& local_maps,
-              float degenerate_threshold, Transform initial = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }) {
+              float degenerate_threshold, Transform initial = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+              float* loss = nullptr) {
+
     feature_adapter adap_velodyne(local_maps.velodyne_feature);
     feature_adapter adap_livox(local_maps.livox_feature);
+
+    if(loss != nullptr) {
+        *loss = 0.0f;
+    }
+
     for(int i = 0; i < 30; i++) {
+
+        float __loss = 0.0f;
         auto N = Ab({ { this_features.velodyne_feature, adap_velodyne },
                       { this_features.livox_feature, adap_livox } },
-                    initial);
+                    initial, &__loss);
+        if(loss != nullptr) {
+            *loss = __loss;
+        }
 
-        if(N.top == 0) {
-            printf("No feature found!\r\n");
+        if(N.top < 5) {
+            if(loss != nullptr) {
+                *loss = 10000.0f;
+            }
             return initial;
         }
 
@@ -88,7 +103,7 @@ static bool feature_ok(const feature_objects& object) {
 }
 
 struct local_map {
-    constexpr static size_t previous_frame_count = 20;
+    constexpr static size_t previous_frame_count = 10;
     feature_frame prev_frames[previous_frame_count];
     Eigen::Matrix4d prev_frame_location[previous_frame_count];
 
@@ -223,6 +238,7 @@ geometry_msgs::Pose to_ros_pose(const Eigen::Matrix4d& transform) {
 }
 
 struct visual_odom_v2_config {
+    int method = 0;
     float degenerate_threshold = 10.0f;
 
     double key_frame_distance_x = 0.5;
@@ -244,6 +260,7 @@ struct visual_odom_v2_config {
 visual_odom_v2_config get_odom_config(ros::NodeHandle* handle) {
     visual_odom_v2_config config;
     handle->param<float>("/tailor/LM/degenerate_threshold", config.degenerate_threshold, 10.0f);
+    handle->param<int>("tailor/LM/method", config.method, 0);
 
     handle->param<double>("/tailor/key_frame/x", config.key_frame_distance_x, 0.5);
     handle->param<double>("/tailor/key_frame/y", config.key_frame_distance_y, 0.5);
@@ -267,6 +284,7 @@ struct visual_odom_v2 {
     local_map local_maps;
 
     Transform next_initial_guess;
+    Eigen::Matrix4d prev_transform = Eigen::Matrix4d::Identity();
 
     float degenerate_threshold = 10.0f;
 
@@ -298,6 +316,56 @@ struct visual_odom_v2 {
         loop_markers.scale.x = 0.1;
         loop_markers.scale.y = 0.1;
         loop_markers.scale.z = 0.1;
+
+        memset(&next_initial_guess, 0, sizeof(next_initial_guess));
+    }
+
+    result_of<Transform, std::string> update_current_frame_LM2(const feature_frame& this_features,
+                                                               const feature_frame& M) {
+        constexpr float loss_threshold = 0.03f;
+        float loss = 0.0f;
+        Transform Tr = LM2(this_features, M, degenerate_threshold, next_initial_guess, &loss);
+        /*if(loss > loss_threshold) {
+            // reset initial guess and try again
+            memset(&next_initial_guess, 0, sizeof(next_initial_guess));
+            Tr = LM2(this_features, M, degenerate_threshold, next_initial_guess, &loss);
+        }
+
+        if(loss > loss_threshold) {
+            char buffer[256];
+            sprintf(buffer, "LM loss too large, %f", loss);
+            return fail(buffer);
+        }*/
+
+        next_initial_guess = Tr;
+        return ok(Tr);
+    }
+
+    result_of<Transform, std::string> update_current_frame_GTSAM(const feature_frame& this_features,
+                                                                 const feature_frame& M) {
+        if(this_features.velodyne_feature.plane_features == nullptr ||
+           this_features.livox_feature.plane_features == nullptr) {
+            ROS_WARN_ONCE("GTSAM-Method not available, using LM2-Method");
+            return update_current_frame_LM2(this_features, M);
+        }
+        float loss_M1 = 0.0f, loss_M2 = 0.0f;
+        Transform tr_livox =
+            LM(this_features.livox_feature, M.livox_feature, next_initial_guess, &loss_M1);
+        Transform tr_v =
+            LM(this_features.velodyne_feature, M.velodyne_feature, next_initial_guess, &loss_M2);
+
+        if(loss_M1 > 1.0f && loss_M2 < 1.0f) {
+            next_initial_guess = tr_v;
+            return ok(tr_v);
+        } else if(loss_M1 < 1.0f && loss_M2 > 1.0f) {
+            next_initial_guess = tr_livox;
+            return ok(tr_livox);
+        } else if(loss_M1 < 1.0f && loss_M2 < 1.0f) {
+            auto M = solve_GTSAM(to_eigen(tr_livox), to_eigen(tr_v), loss_M1, loss_M2);
+            next_initial_guess = from_eigen(M);
+            return ok(next_initial_guess);
+        }
+        return fail("LM loss too large");
     }
 
     result_of<Transform, std::string> update_current_frame(const feature_frame& this_features) {
@@ -316,16 +384,16 @@ struct visual_odom_v2 {
 
         auto M = local_maps.get_local_map();
 
-        Transform Tr = LM2(this_features, M, degenerate_threshold, next_initial_guess);
-
-        next_initial_guess = Tr;
-        return ok(Tr);
+        if(config.method == 0)
+            return update_current_frame_LM2(this_features, M);
+        else
+            return update_current_frame_GTSAM(this_features, M);
     }
 
     Eigen::Matrix4d loop_detection(const pcl::PointCloud<PointType>::Ptr& cloud,
                                    const feature_objects& frame, const Eigen::Matrix4d& transform) {
         size_t result = loop.loop_detection(cloud, frame, transform);
-        if(result == 0)
+        if(result == NO_LOOP)
             return transform;
 
         for(size_t i = 1; i <= local_maps.size(); i++) {
@@ -360,6 +428,7 @@ struct visual_odom_v2 {
 
     std::optional<Eigen::Matrix4d> mapping(const pcl::PointCloud<PointType>::Ptr& velodyne_cloud,
                                            const feature_frame& frame, ros::Time time) {
+
         auto Mr = update_current_frame(frame);
         if(!Mr.ok()) {
             ROS_INFO("Frame dropped : %s", Mr.error().c_str());
@@ -368,6 +437,8 @@ struct visual_odom_v2 {
 
         auto Tr = Mr.value();
         Eigen::Matrix4d M = local_maps.tr() * to_eigen(Tr);
+        Eigen::Matrix4d X = prev_transform.inverse() * M;
+        prev_transform = M;
 
         // if transformation and rotation is too small, drop this frame
         if(!local_maps.empty() && std::abs(Tr.x) < config.key_frame_distance_x &&
@@ -378,6 +449,11 @@ struct visual_odom_v2 {
            std::abs(Tr.yaw) < config.key_frame_distance_yaw) {
             return M;
         }
+
+        Transform M_tr = from_eigen(M);
+        ROS_INFO("Mapping: %f %f %f %f %f %f", M_tr.x, M_tr.y, M_tr.z, M_tr.roll, M_tr.pitch,
+                 M_tr.yaw);
+        next_initial_guess = from_eigen(X);
 
         local_maps.push(frame, M);
 

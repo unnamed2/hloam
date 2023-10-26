@@ -19,6 +19,8 @@ struct loop_result {
     gtsam::Pose3 transform;
 };
 
+constexpr auto NO_LOOP = std::numeric_limits<size_t>::max();
+
 struct loop_var {
     std::vector<velodyne_frame> frames;
 
@@ -29,7 +31,7 @@ struct loop_var {
     int loop_counter = 0;
     size_t loop_reset = 5;
     float loop_max_loss = 0.05f;
-    size_t min_constriant_node = std::numeric_limits<size_t>::max();
+    size_t min_constriant_node = 0;
     loop_var();
 
     size_t loop_detection(const pcl::PointCloud<XYZIRT>::Ptr& cloud, const feature_objects& frame,
@@ -45,5 +47,8 @@ struct loop_var {
         return tr(frames.size() - id);
     }
 };
+
+Eigen::Matrix4d solve_GTSAM(const Eigen::Matrix4d& M1, const Eigen::Matrix4d& M2, float loss_M1,
+                            float loss_M2);
 
 #endif

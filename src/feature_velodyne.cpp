@@ -94,13 +94,6 @@ inline void downsample_surf(continer_type& surface_points) {
     surface_points.erase(selected + 1, surface_points.end());
 }
 
-inline void downsample_surf2(pcl::PointCloud<PointType>::Ptr& surface_points) {
-    static pcl::VoxelGrid<PointType> downSizeFilter;
-    downSizeFilter.setInputCloud(surface_points);
-    downSizeFilter.setLeafSize(0.4, 0.4, 0.4);
-    downSizeFilter.filter(*surface_points);
-}
-
 template<typename point_type>
 inline void get_features(point_type* begin, point_type* end, const size_t* ranges,
                          feature_objects& features) {
@@ -268,8 +261,6 @@ inline void get_features(point_type* begin, point_type* end, const size_t* range
             }
         }
     }
-
-    downsample_surf2(features.plane_features);
 }
 
 void feature_velodyne(const pcl::PointCloud<PointType>::Ptr& cloud, feature_objects& feature) {

@@ -139,11 +139,13 @@ add_library(features STATIC
 add_library(xloop STATIC 
   src/loop.cpp
   src/Scancontext.cpp
+  src/residual.cpp
 )
 
 target_link_libraries(xloop
   gtsam
 )
+
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
 ## either from message generation or dynamic reconfigure

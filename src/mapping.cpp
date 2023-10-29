@@ -5,14 +5,14 @@
 #include <algorithm>
 #include <nav_msgs/Path.h>
 #include <pcl/common/transforms.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/io/pcd_io.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <result_of>
 #include <sensor_msgs/PointCloud2.h>
 #include <tf/transform_broadcaster.h>
 #include <visualization_msgs/MarkerArray.h>
-
-template<typename Scalar>
-static void remove_degenerate(Eigen::Matrix<Scalar, 6, 6>& ATA, Scalar threshold) {
+static void remove_degenerate(Eigen::Matrix<double, 6, 6>& ATA, double threshold) {
     auto eigen = ATA.eigenvalues();
     bool is_degenerate = false;
     for(int i = 0; i < 6; i++) {
@@ -28,6 +28,38 @@ static void remove_degenerate(Eigen::Matrix<Scalar, 6, 6>& ATA, Scalar threshold
             ATA(i, i) += 0.5;
         }
     }
+}
+
+static void downsample_surf2(const pcl::PointCloud<PointType>::Ptr& surface_points,
+                             pcl::PointCloud<PointType>::Ptr& downsampled_surface_points) {
+    static pcl::VoxelGrid<PointType> downSizeFilter;
+    downSizeFilter.setInputCloud(surface_points);
+    downSizeFilter.setLeafSize(0.4, 0.4, 0.4);
+    downSizeFilter.filter(*downsampled_surface_points);
+}
+
+inline feature_objects downsample(const feature_objects& input) {
+    feature_objects result;
+    if(input.line_features != nullptr) {
+        result.line_features.reset(new pcl::PointCloud<PointType>());
+        downsample_surf2(input.line_features, result.line_features);
+    }
+    if(input.plane_features != nullptr) {
+        result.plane_features.reset(new pcl::PointCloud<PointType>());
+        downsample_surf2(input.plane_features, result.plane_features);
+    }
+    if(input.non_features != nullptr) {
+        result.non_features.reset(new pcl::PointCloud<PointType>());
+        downsample_surf2(input.non_features, result.non_features);
+    }
+    return result;
+}
+
+inline feature_frame downsample(const feature_frame& input) {
+    feature_frame result;
+    result.velodyne_feature = downsample(input.velodyne_feature);
+    result.livox_feature = downsample(input.livox_feature);
+    return result;
 }
 
 Transform LM2(const feature_frame& this_features, const feature_frame& local_maps,
@@ -58,15 +90,15 @@ Transform LM2(const feature_frame& this_features, const feature_frame& local_map
             return initial;
         }
 
-        Eigen::Matrix<float, 6, 6> ATA = N.A.topRows(N.top).transpose() * N.A.topRows(N.top);
+        Eigen::Matrix<double, 6, 6> ATA = N.A.topRows(N.top).transpose() * N.A.topRows(N.top);
 
         if(i == 0) {
             remove_degenerate(ATA, degenerate_threshold);
         }
 
-        Eigen::Matrix<float, 6, 1> ATb = N.A.topRows(N.top).transpose() * N.b.topRows(N.top);
+        Eigen::Matrix<double, 6, 1> ATb = N.A.topRows(N.top).transpose() * N.b.topRows(N.top);
 
-        Eigen::Matrix<float, 6, 1> delta = ATA.householderQr().solve(ATb);
+        Eigen::Matrix<double, 6, 1> delta = ATA.householderQr().solve(ATb);
 
         Transform tr = initial;
         tr.x += delta(0);
@@ -82,6 +114,7 @@ Transform LM2(const feature_frame& this_features, const feature_frame& local_map
         initial = tr;
 
         if(delta_xyz < 1e-7 && delta_rpy < 1e-7) {
+            // tr.pitch = tr.roll = 0.0;
             return tr;
         }
     }
@@ -168,7 +201,7 @@ struct local_map {
         if(result.livox_feature.non_features)
             result.livox_feature.non_features->width =
                 result.livox_feature.non_features->points.size();
-        return result;
+        return downsample(result);
     }
 
     template<typename _Range, typename OutputIter, typename MatrixType>
@@ -376,6 +409,8 @@ struct visual_odom_v2 {
         if(!feature_ok(this_features.livox_feature))
             return fail("livox not enough features");
 
+        auto f_ds = downsample(this_features);
+
         if(local_maps.empty()) {
             Eigen::Matrix4d identity = Eigen::Matrix4d::Identity();
             local_maps.push(this_features, identity);
@@ -384,10 +419,35 @@ struct visual_odom_v2 {
 
         auto M = local_maps.get_local_map();
 
+        static size_t frame_index = 0;
+        if(frame_index++ == 500) {
+            printf("local map size: %zd\r\n", local_maps.size());
+            pcl::PointCloud<PointType>::Ptr maps[] = {
+                M.velodyne_feature.line_features,
+                M.velodyne_feature.plane_features,
+                this_features.velodyne_feature.line_features,
+                this_features.velodyne_feature.plane_features,
+            };
+
+            const char* names[] = {
+                "m_line",
+                "m_plane",
+                "t_line",
+                "t_plane",
+            };
+            for(size_t i = 0; i < 4; i++) {
+                if(maps[i] == nullptr)
+                    continue;
+                char filename[256];
+                sprintf(filename, "/tmp/%s.pcd", names[i]);
+                pcl::io::savePCDFileBinary(filename, *maps[i]);
+            }
+        }
+
         if(config.method == 0)
-            return update_current_frame_LM2(this_features, M);
+            return update_current_frame_LM2(f_ds, M);
         else
-            return update_current_frame_GTSAM(this_features, M);
+            return update_current_frame_GTSAM(f_ds, M);
     }
 
     Eigen::Matrix4d loop_detection(const pcl::PointCloud<PointType>::Ptr& cloud,
@@ -451,7 +511,7 @@ struct visual_odom_v2 {
         }
 
         Transform M_tr = from_eigen(M);
-        ROS_INFO("Mapping: %f %f %f %f %f %f", M_tr.x, M_tr.y, M_tr.z, M_tr.roll, M_tr.pitch,
+        ROS_INFO("Mapping: %lf %lf %lf %lf %lf %lf", M_tr.x, M_tr.y, M_tr.z, M_tr.roll, M_tr.pitch,
                  M_tr.yaw);
         next_initial_guess = from_eigen(X);
 
@@ -656,3 +716,6 @@ mapping_thread::~mapping_thread() {
 std::shared_ptr<mapping_thread> create_mapping_thread(ros::NodeHandle* nh) {
     return std::make_shared<mapping_thread>(nh);
 }
+
+#include <pcl/filters/impl/voxel_grid.hpp>
+#include <pcl/impl/pcl_base.hpp>

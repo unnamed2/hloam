@@ -89,7 +89,7 @@ size_t loop_var::loop_detection(const pcl::PointCloud<XYZIRT>::Ptr& cloud,
     gtsam::Pose3 from = p(frames[id].transform);
     gtsam::Pose3 to = p(frames[id].transform * to_eigen(final_tr));
     printf("loss: %f\n", loss);
-    if(loss > 0.05) {
+    if(loss > 0.03) {
         return 0;
     }
     loop_result r = {

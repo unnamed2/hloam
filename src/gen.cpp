@@ -106,6 +106,9 @@ static auto minmax_time(const stamped_velodyne& cloud) {
                             [](const PointType& a, const PointType& b) { return a.time < b.time; });
 
     double offset = 0.0f;
+    if(var.first->time < 1.0f) {
+        offset = cloud.time;
+    }
 
     return std::make_pair(var.first->time + offset, var.second->time + offset);
 }

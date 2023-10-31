@@ -221,7 +221,7 @@ inline plane search_plane(const array_adaptor<point_type>& tree, const point_typ
 
 template<typename point_type>
 inline coeff plane_coeff(const plane& pl, const point_type& p) {
-    if(pl.ok && p.z < 0.5f) {
+    if(pl.ok) {
         float pd2 = pl.a * p.x + pl.b * p.y + pl.c * p.z + pl.d;
 
         float s = tanf(1 - 0.9 * fabs(pd2) / sqrt(sqrt(p.x * p.x + p.y * p.y + p.z * p.z)));

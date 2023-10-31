@@ -1,7 +1,7 @@
 gen:
-  pose: /home/jlurobot/桌面/tailor/src/tailor/map/1698390811.txt
+  pose: /home/jlurobot/桌面/tailor实验结果/exp-1.2-0.0-double-loop.txt
   livox_topic: /livox_hap
   velodyne_topic: /u2102
   livox_transform: [ -1.44776, -0.0634472,  1.35995, 0.00433622, 0.04771802, -0.00743534 ]
   global_map: /home/jlurobot/桌面/tailor/src/tailor/map/global_map
-  downsample_rate: 0.9
+  downsample_rate: 0.9 

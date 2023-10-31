@@ -114,7 +114,7 @@ Transform LM2(const feature_frame& this_features, const feature_frame& local_map
         initial = tr;
 
         if(delta_xyz < 1e-7 && delta_rpy < 1e-7) {
-            // tr.pitch = tr.roll = 0.0;
+            tr.pitch = tr.roll = 0.0;
             return tr;
         }
     }

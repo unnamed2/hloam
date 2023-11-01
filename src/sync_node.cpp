@@ -107,7 +107,7 @@ public:
 
         auto [velodyne_frame_start, velodyne_frame_end] = minmax_time(velodyne_sequences.front());
         double livox_frame_end = livox_sequences.back().time;
-        double livox_frame_start = livox_sequences.front().time;
+        double livox_frame_start = livox_sequences[livox_index].time;
 
         if(livox_frame_end < velodyne_frame_end) {
             return false;
@@ -137,6 +137,11 @@ public:
                 break;
             }
             end_index++;
+        }
+
+        if(start_index == end_index) {
+            ROS_INFO("start_index == end_index, %lf, %lf, %lf, %lf", livox_frame_start,
+                     livox_frame_end, velodyne_frame_start, velodyne_frame_end);
         }
 
         livox_cloud->points.assign(livox_sequences.begin() + start_index,

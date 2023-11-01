@@ -34,7 +34,7 @@ static void downsample_surf2(const pcl::PointCloud<PointType>::Ptr& surface_poin
                              pcl::PointCloud<PointType>::Ptr& downsampled_surface_points) {
     static pcl::VoxelGrid<PointType> downSizeFilter;
     downSizeFilter.setInputCloud(surface_points);
-    downSizeFilter.setLeafSize(0.4, 0.4, 0.4);
+    downSizeFilter.setLeafSize(0.2, 0.2, 0.2);
     downSizeFilter.filter(*downsampled_surface_points);
 }
 
@@ -381,6 +381,7 @@ struct visual_odom_v2 {
             ROS_WARN_ONCE("GTSAM-Method not available, using LM2-Method");
             return update_current_frame_LM2(this_features, M);
         }
+
         float loss_M1 = 0.0f, loss_M2 = 0.0f;
         Transform tr_livox =
             LM(this_features.livox_feature, M.livox_feature, next_initial_guess, &loss_M1);

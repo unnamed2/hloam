@@ -63,6 +63,17 @@ public:
     void makeAndSaveScancontextAndKeys(const pcl::PointCloud<SCPointType>& _scan_down);
     std::pair<int, float> detectLoopClosureID(void); // int: nearest node index, float: relative yaw
 
+    void pop_back() {
+        polarcontexts_.pop_back();
+        polarcontext_invkeys_.pop_back();
+        polarcontext_vkeys_.pop_back();
+        polarcontext_invkeys_mat_.pop_back();
+
+        if(tree_making_period_conter > 0) {
+            tree_making_period_conter--;
+        }
+    }
+
 public:
     // hyper parameters ()
     const double LIDAR_HEIGHT = 2.0; // lidar height : add this for simply directly using lidar scan
@@ -84,10 +95,10 @@ public:
     const double SEARCH_RATIO =
         0.1; // for fast comparison, no Brute-force, but search 10 % is okay. // not was in the
              // original conf paper, but improved ver.
-    const double SC_DIST_THRES = 0.13; // empirically 0.1-0.2 is fine (rare false-alarms) for 20x60
-                                       // polar context (but for 0.15 <, DCS or ICP fit score check
-                                       // (e.g., in LeGO-LOAM) should be required for robustness)
-    // const double SC_DIST_THRES = 0.5; // 0.4-0.6 is good choice for using with robust kernel
+    // const double SC_DIST_THRES = 0.13; // empirically 0.1-0.2 is fine (rare false-alarms) for
+    // 20x60 polar context (but for 0.15 <, DCS or ICP fit score check (e.g., in LeGO-LOAM) should
+    // be required for robustness)
+    const double SC_DIST_THRES = 0.5; // 0.4-0.6 is good choice for using with robust kernel
     // (e.g., Cauchy, DCS) + icp fitness threshold / if not, recommend 0.1-0.15
 
     // config
@@ -98,7 +109,6 @@ public:
     int tree_making_period_conter = 0;
 
     // data
-    std::vector<double> polarcontexts_timestamp_; // optional.
     std::vector<Eigen::MatrixXd> polarcontexts_;
     std::vector<Eigen::MatrixXd> polarcontext_invkeys_;
     std::vector<Eigen::MatrixXd> polarcontext_vkeys_;

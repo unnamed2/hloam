@@ -5,6 +5,7 @@
 #include <gtsam/nonlinear/ISAM2.h>
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/PriorFactor.h>
+#include <pcl/registration/icp.h>
 
 static gtsam::Pose3 p(LMTransform tr) {
     return gtsam::Pose3(gtsam::Rot3::RzRyRx(tr.yaw, tr.pitch, tr.roll),
@@ -25,13 +26,55 @@ static Eigen::Matrix4d to_eigen(const gtsam::Pose3& tr) {
     return m;
 }
 
-static void dump_features(const feature_objects& f, const char* filename) {
-    pcl::PointCloud<XYZIRT>::Ptr cloud(new pcl::PointCloud<XYZIRT>);
-    concat(cloud, f.line_features);
-    concat(cloud, f.plane_features);
-    concat(cloud, f.non_features);
+static void downsample_surf2(const pcl::PointCloud<PointType>::Ptr& surface_points,
+                             pcl::PointCloud<PointType>& downsampled_surface_points) {
+    static pcl::VoxelGrid<PointType> downSizeFilter;
+    downSizeFilter.setInputCloud(surface_points);
+    downSizeFilter.setLeafSize(0.4, 0.4, 0.4);
+    downSizeFilter.filter(downsampled_surface_points);
+}
 
-    pcl::io::savePCDFileBinary(filename, *cloud);
+inline feature_objects downsample(const feature_objects& input) {
+    feature_objects result;
+    if(input.line_features != nullptr) {
+        result.line_features.reset(new pcl::PointCloud<PointType>());
+        downsample_surf2(input.line_features, *result.line_features);
+    }
+    if(input.plane_features != nullptr) {
+        result.plane_features.reset(new pcl::PointCloud<PointType>());
+        downsample_surf2(input.plane_features, *result.plane_features);
+    }
+    if(input.non_features != nullptr) {
+        result.non_features.reset(new pcl::PointCloud<PointType>());
+        downsample_surf2(input.non_features, *result.non_features);
+    }
+    return result;
+}
+
+inline feature_frame downsample(const feature_frame& input) {
+    feature_frame result;
+    result.velodyne_feature = downsample(input.velodyne_feature);
+    result.livox_feature = downsample(input.livox_feature);
+    return result;
+}
+
+static void dump_features(const feature_objects& f, const char* filename) {
+    char filename2[256];
+    pcl::PointCloud<XYZIRT>::Ptr cloud(new pcl::PointCloud<XYZIRT>);
+    if(f.line_features != nullptr) {
+        sprintf(filename2, "%s_line.pcd", filename);
+        pcl::io::savePCDFileBinary(filename2, *f.line_features);
+    }
+
+    if(f.plane_features != nullptr) {
+        sprintf(filename2, "%s_plane.pcd", filename);
+        pcl::io::savePCDFileBinary(filename2, *f.plane_features);
+    }
+
+    if(f.non_features != nullptr) {
+        sprintf(filename2, "%s_non.pcd", filename);
+        pcl::io::savePCDFileBinary(filename2, *f.non_features);
+    }
 }
 
 loop_var::loop_var(): loop_counter(loop_reset) {
@@ -40,11 +83,11 @@ loop_var::loop_var(): loop_counter(loop_reset) {
 size_t loop_var::loop_detection(const pcl::PointCloud<XYZIRT>::Ptr& cloud,
                                 const feature_objects& frame, const Eigen::Matrix4d& transform) {
     sc_manager.makeAndSaveScancontextAndKeys(*cloud);
-    frames.push_back({ frame, transform });
+    frames.push_back({ cloud, transform });
 
     if(loop_counter > 0) {
         loop_counter--;
-        return 0;
+        return NO_LOOP;
     }
 
     loop_counter = loop_reset;
@@ -52,45 +95,61 @@ size_t loop_var::loop_detection(const pcl::PointCloud<XYZIRT>::Ptr& cloud,
     auto [id, yaw] = sc_manager.detectLoopClosureID();
 
     if(id == -1) {
-        return 0;
+        return NO_LOOP;
     }
 
     // build local map;
-    int start_index = id - 0;
+    int start_index = id - 10;
 
     if(start_index < 0) {
         start_index = 0;
     }
 
-    int end_index = id + 0;
+    int end_index = start_index + 20;
     if(end_index >= frames.size()) {
         end_index = frames.size() - 1;
     }
 
-    feature_objects local_map;
-    feature_objects transformed;
+    pcl::PointCloud<XYZIRT>::Ptr local_map(new pcl::PointCloud<XYZIRT>);
+    pcl::PointCloud<XYZIRT>::Ptr transformed(new pcl::PointCloud<XYZIRT>);
 
     Eigen::Matrix4d tr = frames[id].transform.inverse();
 
     for(int i = start_index; i <= end_index; i++) {
         auto& frame = frames[i];
         Eigen::Matrix4d this_tr = tr * frame.transform;
-        transform_cloud(frame.velodyne_features, transformed, this_tr);
-        concat(local_map, transformed);
+        pcl::transformPointCloud(*frame.velodyne_cloud, *transformed, this_tr);
+        *local_map += *transformed;
     }
+
+    downsample_surf2(local_map, *local_map);
+    downsample_surf2(cloud, *transformed);
+
     if(yaw > M_PI)
         yaw -= M_PI * 2.0;
 
-    LMTransform initial_guess = { 0, 0, 0, 0, 0, yaw };
+    pcl::IterativeClosestPoint<PointType, PointType> icp;
+    icp.setInputSource(transformed);
+    icp.setInputTarget(local_map);
+    icp.setMaximumIterations(100);
+    icp.setTransformationEpsilon(1e-6);
+    icp.setMaxCorrespondenceDistance(0.5);
 
-    float loss = 0.0f;
-    auto final_tr = LM(frame, local_map, initial_guess, &loss);
+    Eigen::Matrix4f init_tr = Eigen::Matrix4f::Identity();
+    init_tr.block<3, 3>(0, 0) =
+        Eigen::AngleAxisf(-yaw, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+
+    pcl::PointCloud<PointType> final;
+    icp.align(final, init_tr);
+
+    Eigen::Matrix4d final_tr = icp.getFinalTransformation().cast<double>();
+    float loss = icp.getFitnessScore();
 
     gtsam::Pose3 from = p(frames[id].transform);
-    gtsam::Pose3 to = p(frames[id].transform * to_eigen(final_tr));
+    gtsam::Pose3 to = p(frames[id].transform * final_tr);
     printf("loss: %f\n", loss);
-    if(loss > 0.03) {
-        return 0;
+    if(loss > 0.5f) {
+        return NO_LOOP;
     }
     loop_result r = {
         (size_t)id,
@@ -150,6 +209,14 @@ void loop_var::optimization(size_t from_id) {
     }
 }
 
+void loop_var::pop_back() {
+    if(!loop.empty() && loop.back().target_frame_id == frames.size() - 1)
+        loop.pop_back();
+
+    sc_manager.pop_back();
+    frames.pop_back();
+}
+
 Eigen::Matrix4d solve_GTSAM(const Eigen::Matrix4d& M1, const Eigen::Matrix4d& M2, float loss_M1,
                             float loss_M2) {
     gtsam::ISAM2 isam;
@@ -187,3 +254,9 @@ Eigen::Matrix4d solve_GTSAM(const Eigen::Matrix4d& M1, const Eigen::Matrix4d& M2
     auto result = isam.calculateEstimate();
     return to_eigen(result.at<gtsam::Pose3>(1));
 }
+
+#include <pcl/filters/impl/voxel_grid.hpp>
+#include <pcl/impl/pcl_base.hpp>
+#include <pcl/kdtree/impl/kdtree_flann.hpp>
+#include <pcl/registration/impl/icp.hpp>
+#include <pcl/search/impl/kdtree.hpp>

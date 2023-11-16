@@ -9,7 +9,7 @@
 using LMTransform = ::Transform;
 
 struct velodyne_frame {
-    feature_objects velodyne_features;
+    pcl::PointCloud<XYZIRT>::Ptr velodyne_cloud;
     Eigen::Matrix4d transform;
 };
 
@@ -46,6 +46,8 @@ struct loop_var {
     const Eigen::Matrix4d& btr(size_t id) {
         return tr(frames.size() - id);
     }
+
+    void pop_back();
 };
 
 Eigen::Matrix4d solve_GTSAM(const Eigen::Matrix4d& M1, const Eigen::Matrix4d& M2, float loss_M1,

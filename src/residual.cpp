@@ -461,11 +461,8 @@ inline Transform __LM_iteration(const feature_objects& source, array_adaptor<Poi
     size_t surf_size = size_of(source.plane_features);
     size_t non_size = size_of(source.non_features);
 
-    if(loss) {
-        *loss = 0;
-    }
-
-#pragma omp parallel for
+    float __loss = 0.0f;
+#pragma omp parallel for(reduction(+ : __loss))
     for(size_t i = 0; i < corner_size + surf_size + non_size; ++i) {
         coeff c;
         c.s = 0;
@@ -495,8 +492,10 @@ inline Transform __LM_iteration(const feature_objects& source, array_adaptor<Poi
             c = point_coeff(sp, p2);
         }
 
-        if(c.s < 0.1f)
+        if(c.s < 0.1f) {
+            __loss += 1e-3f;
             continue;
+        }
         jacobian j = J(c, g);
         int idx = index.fetch_add(1);
         A(idx, 0) = j.j[0];
@@ -507,9 +506,7 @@ inline Transform __LM_iteration(const feature_objects& source, array_adaptor<Poi
         A(idx, 5) = j.j[5];
         b(idx) = -c.b;
 
-        if(loss) {
-            loss[0] += c.b * c.b;
-        }
+        __loss += c.b * c.b;
     }
 
     if(index < 100) {
@@ -531,7 +528,7 @@ inline Transform __LM_iteration(const feature_objects& source, array_adaptor<Poi
     delta.yaw = initial_guess.yaw + x(5, 0);
 
     if(loss) {
-        loss[0] /= index;
+        loss[0] = __loss / index;
     }
     return delta;
 }
@@ -562,12 +559,14 @@ Transform LM(const feature_objects& source, const feature_objects& target,
         // printf("iter: %d, deltaR: %f, deltaT: %f\r\n", iter, deltaR, deltaT);
         result = u;
         if(deltaR < 0.0005 && deltaT < 0.0005) {
+            result.roll = result.pitch = 0;
             break;
         }
     }
 
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> diff = end - start;
+
     return result;
 }
 

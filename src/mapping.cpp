@@ -12,6 +12,32 @@
 #include <sensor_msgs/PointCloud2.h>
 #include <tf/transform_broadcaster.h>
 #include <visualization_msgs/MarkerArray.h>
+
+static void dump_feature_frame(const feature_frame& f, const char* tag) {
+    const char* base_ptr = "/home/jlurobot/桌面/LM测试/";
+    char filename[256];
+
+    if(f.velodyne_feature.line_features != nullptr) {
+        sprintf(filename, "%s/%s_vl.pcd", base_ptr, tag);
+        pcl::io::savePCDFileBinary(filename, *f.velodyne_feature.line_features);
+    }
+
+    if(f.velodyne_feature.plane_features != nullptr) {
+        sprintf(filename, "%s/%s_vp.pcd", base_ptr, tag);
+        pcl::io::savePCDFileBinary(filename, *f.velodyne_feature.plane_features);
+    }
+
+    if(f.livox_feature.plane_features != nullptr) {
+        sprintf(filename, "%s/%s_lp.pcd", base_ptr, tag);
+        pcl::io::savePCDFileBinary(filename, *f.livox_feature.plane_features);
+    }
+
+    if(f.livox_feature.non_features != nullptr) {
+        sprintf(filename, "%s/%s_ln.pcd", base_ptr, tag);
+        pcl::io::savePCDFileBinary(filename, *f.livox_feature.non_features);
+    }
+}
+
 static void remove_degenerate(Eigen::Matrix<double, 6, 6>& ATA, double threshold) {
     auto eigen = ATA.eigenvalues();
     bool is_degenerate = false;
@@ -293,7 +319,7 @@ struct visual_odom_v2_config {
 visual_odom_v2_config get_odom_config(ros::NodeHandle* handle) {
     visual_odom_v2_config config;
     handle->param<float>("/tailor/LM/degenerate_threshold", config.degenerate_threshold, 10.0f);
-    handle->param<int>("tailor/LM/method", config.method, 0);
+    handle->param<int>("/tailor/LM/method", config.method, 0);
 
     handle->param<double>("/tailor/key_frame/x", config.key_frame_distance_x, 0.5);
     handle->param<double>("/tailor/key_frame/y", config.key_frame_distance_y, 0.5);
@@ -382,6 +408,8 @@ struct visual_odom_v2 {
             return update_current_frame_LM2(this_features, M);
         }
 
+        ROS_INFO_ONCE("GTSAM-Method enabled");
+
         float loss_M1 = 0.0f, loss_M2 = 0.0f;
         Transform tr_livox =
             LM(this_features.livox_feature, M.livox_feature, next_initial_guess, &loss_M1);
@@ -420,30 +448,13 @@ struct visual_odom_v2 {
 
         auto M = local_maps.get_local_map();
 
-        static size_t frame_index = 0;
-        if(frame_index++ == 500) {
-            printf("local map size: %zd\r\n", local_maps.size());
-            pcl::PointCloud<PointType>::Ptr maps[] = {
-                M.velodyne_feature.line_features,
-                M.velodyne_feature.plane_features,
-                this_features.velodyne_feature.line_features,
-                this_features.velodyne_feature.plane_features,
-            };
-
-            const char* names[] = {
-                "m_line",
-                "m_plane",
-                "t_line",
-                "t_plane",
-            };
-            for(size_t i = 0; i < 4; i++) {
-                if(maps[i] == nullptr)
-                    continue;
-                char filename[256];
-                sprintf(filename, "/tmp/%s.pcd", names[i]);
-                pcl::io::savePCDFileBinary(filename, *maps[i]);
-            }
+        static size_t frame_id = 0;
+        if(frame_id == 200) {
+            dump_feature_frame(this_features, "T");
+            dump_feature_frame(M, "M");
         }
+
+        frame_id++;
 
         if(config.method == 0)
             return update_current_frame_LM2(f_ds, M);
@@ -452,10 +463,17 @@ struct visual_odom_v2 {
     }
 
     Eigen::Matrix4d loop_detection(const pcl::PointCloud<PointType>::Ptr& cloud,
-                                   const feature_objects& frame, const Eigen::Matrix4d& transform) {
+                                   const feature_objects& frame, const Eigen::Matrix4d& transform,
+                                   bool* has_loop) {
         size_t result = loop.loop_detection(cloud, frame, transform);
-        if(result == NO_LOOP)
+        if(result == NO_LOOP) {
+            if(has_loop != nullptr)
+                *has_loop = false;
             return transform;
+        }
+
+        if(has_loop != nullptr)
+            *has_loop = true;
 
         for(size_t i = 1; i <= local_maps.size(); i++) {
             local_maps.set(i, loop.btr(i));
@@ -501,13 +519,19 @@ struct visual_odom_v2 {
         Eigen::Matrix4d X = prev_transform.inverse() * M;
         prev_transform = M;
 
+        bool has_loop = false;
+        if(config.enable_loop) {
+            M = loop_detection(velodyne_cloud, frame.velodyne_feature, M, &has_loop);
+        }
+
         // if transformation and rotation is too small, drop this frame
-        if(!local_maps.empty() && std::abs(Tr.x) < config.key_frame_distance_x &&
+        if(!has_loop && !local_maps.empty() && std::abs(Tr.x) < config.key_frame_distance_x &&
            std::abs(Tr.y) < config.key_frame_distance_y &&
            std::abs(Tr.z) < config.key_frame_distance_z &&
            std::abs(Tr.roll) < config.key_frame_distance_roll &&
            std::abs(Tr.pitch) < config.key_frame_distance_pitch &&
            std::abs(Tr.yaw) < config.key_frame_distance_yaw) {
+            loop.pop_back();
             return M;
         }
 
@@ -528,10 +552,7 @@ struct visual_odom_v2 {
 
         loop_markers.header.stamp = time;
 
-        if(config.enable_loop)
-            return loop_detection(velodyne_cloud, frame.velodyne_feature, M);
-        else
-            return M;
+        return M;
     }
 };
 

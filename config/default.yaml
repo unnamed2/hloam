@@ -2,7 +2,15 @@ tailor:
   mapping_save_path: /home/jlurobot/桌面/tailor/src/tailor/map
   livox_topic: /livox_hap
   velodyne_topic: /u2102
-  livox_transform: [ -1.44776, -0.0634472,  1.35995, 0.00433622, 0.04771802, -0.00743534 ]
+  # 26 Sep 2023
+  # livox_transform: [ -1.44776, -0.0634472,  1.35995, 0.00433622, 0.04771802, -0.00743534 ]
+
+  # 19 Sep 2023
+  # livox_transform: [ -1.56616,     0.00223643,  1.30933,     0.02656115,  0.03902451, -0.01630944 ]
+
+  # 04 Nov 2023
+  livox_transform: [-1.37607,    -0.0491354,   1.3766,      0.01402937 , 0.04438576 ,-0.01375317 ]
+
   use_livox: true
   use_velodyne: true
   
@@ -19,8 +27,8 @@ tailor:
     yaw: 0.02
 
   loop:
-    enable: false
+    enable: true
     max_loss: 0.02
-    loop_reset: 2
+    loop_reset: 0
     initial_load: 100
     

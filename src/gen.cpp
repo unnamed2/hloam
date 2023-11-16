@@ -17,10 +17,18 @@ struct XYZRPYT {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 } EIGEN_ALIGN16;
 
+// clang-format off
 POINT_CLOUD_REGISTER_POINT_STRUCT(XYZRPYT,
-                                  (float, x, x)(float, y, y)(float, z, z)(double, roll, roll)(
-                                      double, pitch, pitch)(double, yaw, yaw)(double, time, time));
+                                  (float, x, x)
+                                  (float, y, y)
+                                  (float, z, z)
+                                  (double, roll, roll)
+                                  (double, pitch, pitch)
+                                  (double, yaw, yaw)
+                                  (double, time, time)
+                        );
 
+// clang format on
 struct LMCacheItem {
     Eigen::Matrix4d pose;
     double time;
@@ -162,6 +170,8 @@ class Gen: public ros::NodeHandle {
 
     std::vector<LMCacheItem> traces;
 
+    bool lego = false;
+
 public:
     Gen(): ros::NodeHandle("tailor") {
         std::string livox_topic, velodyne_topic;
@@ -183,7 +193,7 @@ public:
         param<std::string>("/gen/velodyne_topic", velodyne_topic, "/u2102");
         param<std::string>("/gen/global_map", global_map_filename, "/tmp/global_map.pcd");
         param<double>("/gen/downsample_rate", downsample_rate, 0.01);
-
+        param<bool>("/gen/lego", lego, false);
         // X,Y,Z,R,P,Y
         std::vector<float> livox_cab;
         param<std::vector<float>>("/gen/livox_transform", livox_cab, { 0, 0, 0, 0, 0, 0 });
@@ -199,9 +209,9 @@ public:
         tr.pitch = livox_cab[4];
         tr.yaw = livox_cab[5];
 
-        ROS_INFO("livox_transform: %f %f %f %f %f %f", tr.x, tr.y, tr.z, tr.roll, tr.pitch, tr.yaw);
-
         livox_transform = to_eigen(tr).inverse();
+
+        ROS_INFO("livox_transform: %f %f %f %f %f %f", tr.x, tr.y, tr.z, tr.roll, tr.pitch, tr.yaw);
 
         ROS_INFO("Subscribing to %s and %s", livox_topic.c_str(), velodyne_topic.c_str());
         sub_livox = subscribe(livox_topic, 100, &Gen::livox_callback, this);
@@ -334,6 +344,10 @@ public:
         feature_velodyne(velodyne_cloud, velodyne_features);
 
         Eigen::Matrix4d pose = tbl->next();
+        if(lego) {
+            Transform t = { 0, 0, 0, M_PI_2, 0, M_PI_2 };
+            pose = to_eigen(t) * pose;
+        }
 
         traces.push_back({ pose, sec });
 
@@ -412,7 +426,7 @@ public:
     void save_global_map() {
         if(global_map_filename.empty())
             return;
-
+        return;
         if(std::filesystem::exists(global_map_filename)) {
             if(!std::filesystem::is_directory(global_map_filename)) {
                 std::filesystem::remove(global_map_filename);

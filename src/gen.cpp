@@ -173,7 +173,7 @@ class Gen: public ros::NodeHandle {
     bool lego = false;
 
 public:
-    Gen(): ros::NodeHandle("tailor") {
+    Gen(): ros::NodeHandle("hloam") {
         std::string livox_topic, velodyne_topic;
 
         std::string lmcache_filename;

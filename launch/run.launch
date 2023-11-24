@@ -1,8 +1,8 @@
 <launch>
-    <rosparam file="$(find tailor)/config/default.yaml" command="load" />
+    <rosparam file="$(find hloam)/config/default.yaml" command="load" />
 
-    <node pkg="tailor" type="sync_node" name="tailor" output="screen" />
+    <node pkg="hloam" type="sync_node" name="hloam" output="screen" />
 
-    <node pkg="rviz" type="rviz" name="tailor_rviz" args="-d $(find tailor)/rviz/default.rviz" output="screen" />
+    <node pkg="rviz" type="rviz" name="tailor_rviz" args="-d $(find hloam)/rviz/default.rviz" output="screen" />
     
 </launch>

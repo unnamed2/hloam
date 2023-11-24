@@ -105,8 +105,8 @@ void feature_thread::__features_thread() {
 }
 
 feature_thread::feature_thread(ros::NodeHandle* nh) {
-    nh->param<bool>("/tailor/use_livox", use_livox, true);
-    nh->param<bool>("/tailor/use_velodyne", use_velodyne, true);
+    nh->param<bool>("/hloam/use_livox", use_livox, true);
+    nh->param<bool>("/hloam/use_velodyne", use_velodyne, true);
 
     pub_velodyne_line_features =
         nh->advertise<sensor_msgs::PointCloud2>("/features/velodyne_line_features", 1, true);
@@ -128,7 +128,7 @@ feature_thread::feature_thread(ros::NodeHandle* nh) {
 
     // X,Y,Z,R,P,Y
     std::vector<float> livox_cab;
-    nh->param<std::vector<float>>("/tailor/livox_transform", livox_cab, { 0, 0, 0, 0, 0, 0 });
+    nh->param<std::vector<float>>("/hloam/livox_transform", livox_cab, { 0, 0, 0, 0, 0, 0 });
 
     if(livox_cab.size() != 6) {
         ROS_FATAL("livox_transform must have 6 elements, %zd got", livox_cab.size());

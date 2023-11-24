@@ -1,5 +1,5 @@
-tailor:
-  mapping_save_path: /home/jlurobot/桌面/tailor/src/tailor/map
+hloam:
+  mapping_save_path: /home/jlurobot/桌面/hloam/src/hloam/map
   livox_topic: /livox_hap
   velodyne_topic: /u2102
   # 26 Sep 2023

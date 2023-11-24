@@ -1,8 +1,8 @@
 <launch>
-    <rosparam file="$(find tailor)/config/gen.yaml" command="load" />
+    <rosparam file="$(find hloam)/config/gen.yaml" command="load" />
 
-    <node pkg="tailor" type="gen" name="gen" output="screen" />
+    <node pkg="hloam" type="gen" name="gen" output="screen" />
 
-    <node pkg="rviz" type="rviz" name="tailor_rviz" args="-d $(find tailor)/rviz/gen.rviz" output="screen" />
+    <node pkg="rviz" type="rviz" name="tailor_rviz" args="-d $(find hloam)/rviz/gen.rviz" output="screen" />
     
 </launch>

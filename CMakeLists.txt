@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0.2)
-project(tailor)
+project(hloam)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 set(CMAKE_CXX_STANDARD 17)
@@ -108,7 +108,7 @@ generate_messages(
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
 #  INCLUDE_DIRS include
-#  LIBRARIES tailor
+#  LIBRARIES hloam
 #  CATKIN_DEPENDS nav_msgs pcl_conversion roscpp sensor_msgs std_msgs
 #  DEPENDS system_lib
 )
@@ -128,7 +128,7 @@ include_directories(
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
-#   src/${PROJECT_NAME}/tailor.cpp
+#   src/${PROJECT_NAME}/hloam.cpp
 # )
 
 add_library(features STATIC

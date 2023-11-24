@@ -7,7 +7,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <signal.h>
-#include <tailor/synced_cloud.h>
+#include <hloam/synced_cloud.h>
 
 struct stamped_velodyne {
     pcl::PointCloud<PointType>::Ptr cloud;
@@ -43,11 +43,11 @@ class Junk: public ros::NodeHandle {
     ros::Publisher publish_combined;
 
 public:
-    Junk(): ros::NodeHandle("tailor") {
+    Junk(): ros::NodeHandle("hloam") {
         std::string livox_topic, velodyne_topic;
 
-        param<std::string>("/tailor/livox_topic", livox_topic, "/livox_hap");
-        param<std::string>("/tailor/velodyne_topic", velodyne_topic, "/u2102");
+        param<std::string>("/hloam/livox_topic", livox_topic, "/livox_hap");
+        param<std::string>("/hloam/velodyne_topic", velodyne_topic, "/u2102");
         // X,Y,Z,R,P,Y
 
         ROS_INFO("Subscribing to %s and %s", livox_topic.c_str(), velodyne_topic.c_str());

@@ -318,23 +318,23 @@ struct visual_odom_v2_config {
 
 visual_odom_v2_config get_odom_config(ros::NodeHandle* handle) {
     visual_odom_v2_config config;
-    handle->param<float>("/tailor/LM/degenerate_threshold", config.degenerate_threshold, 10.0f);
-    handle->param<int>("/tailor/LM/method", config.method, 0);
+    handle->param<float>("/hloam/LM/degenerate_threshold", config.degenerate_threshold, 10.0f);
+    handle->param<int>("/hloam/LM/method", config.method, 0);
 
-    handle->param<double>("/tailor/key_frame/x", config.key_frame_distance_x, 0.5);
-    handle->param<double>("/tailor/key_frame/y", config.key_frame_distance_y, 0.5);
-    handle->param<double>("/tailor/key_frame/z", config.key_frame_distance_z, 0.1);
+    handle->param<double>("/hloam/key_frame/x", config.key_frame_distance_x, 0.5);
+    handle->param<double>("/hloam/key_frame/y", config.key_frame_distance_y, 0.5);
+    handle->param<double>("/hloam/key_frame/z", config.key_frame_distance_z, 0.1);
 
-    handle->param<double>("/tailor/key_frame/roll", config.key_frame_distance_roll, 0.02);
-    handle->param<double>("/tailor/key_frame/pitch", config.key_frame_distance_pitch, 0.02);
-    handle->param<double>("/tailor/key_frame/yaw", config.key_frame_distance_yaw, 0.02);
+    handle->param<double>("/hloam/key_frame/roll", config.key_frame_distance_roll, 0.02);
+    handle->param<double>("/hloam/key_frame/pitch", config.key_frame_distance_pitch, 0.02);
+    handle->param<double>("/hloam/key_frame/yaw", config.key_frame_distance_yaw, 0.02);
 
-    handle->param<double>("/tailor/loop/max_loss", config.loop_loss, 0.05);
+    handle->param<double>("/hloam/loop/max_loss", config.loop_loss, 0.05);
 
-    handle->param<int>("/tailor/loop/reset", config.loop_reset, 5);
-    handle->param<int>("/tailor/loop/initial_load", config.loop_initial_load, 100);
+    handle->param<int>("/hloam/loop/reset", config.loop_reset, 5);
+    handle->param<int>("/hloam/loop/initial_load", config.loop_initial_load, 100);
 
-    handle->param<bool>("/tailor/loop/enable", config.enable_loop, true);
+    handle->param<bool>("/hloam/loop/enable", config.enable_loop, true);
 
     return config;
 }
@@ -634,7 +634,7 @@ void mapping_thread::__mapping_thread(ros::NodeHandle* nh) {
     visual_odom_v2 mapping_v2(nh);
 
     std::string save_path;
-    nh->param<std::string>("/tailor/mapping_save_path", save_path, "");
+    nh->param<std::string>("/hloam/mapping_save_path", save_path, "");
     printf("Mapping save path: %s\r\n", save_path.c_str());
 
     mapping_v2.degenerate_threshold = degenerate_threshold;
@@ -705,7 +705,7 @@ mapping_thread::mapping_thread(ros::NodeHandle* nh) {
     });
 
     std::vector<float> livox_cab;
-    nh->param<std::vector<float>>("/tailor/livox_transform", livox_cab, { 0, 0, 0, 0, 0, 0 });
+    nh->param<std::vector<float>>("/hloam/livox_transform", livox_cab, { 0, 0, 0, 0, 0, 0 });
 
     if(livox_cab.size() != 6) {
         ROS_FATAL("livox_transform must have 6 elements, %zd got", livox_cab.size());
@@ -723,7 +723,7 @@ mapping_thread::mapping_thread(ros::NodeHandle* nh) {
 
     livox_transform = to_eigen(tr).inverse();
 
-    nh->param<float>("/tailor/degenerate_threshold", degenerate_threshold, 10.0f);
+    nh->param<float>("/hloam/degenerate_threshold", degenerate_threshold, 10.0f);
     if(degenerate_threshold < 5.0f) {
         ROS_WARN("degenerate_threshold is too small, %f", degenerate_threshold);
     }
